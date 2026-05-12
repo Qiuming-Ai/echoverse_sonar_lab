@@ -1,0 +1,52 @@
+{
+    "array_params": {
+        "BW": 100000,
+        "Nrx": 128,
+        "Ntx": 1,
+        "c0": 1500,
+        "compensate_range": [
+            0
+        ],
+        "fc": 450000,
+        "fs": 2000000,
+        "interp_factor": 8,
+        "lightPos": [
+            0,
+            0,
+            0
+        ],
+        "pulse_len": 0.005,
+        "rx_interval_lambda": 0.5,
+        "snr_level": [
+            0
+        ],
+        "tx_interval_lambda": 0,
+        "velocity": [
+            0
+        ]
+    },
+    "file_opt_params": {
+        "esl3d_path": "",
+        "output_path": ""
+    },
+    "rx_signal_params": {
+        "angle_segments_deg": [
+            [
+                -60,
+                60
+            ]
+        ],
+        "angle_step_deg": 1,
+        "array_window": "hamming",
+        "decimation_factor": 16,
+        "signal_window": "hamming"
+    },
+    "tx_signal_params": {
+        "SubBW": 100000,
+        "Subfc": 450000,
+        "angles_deg": 0,
+        "pol": "up",
+        "sector_num": 1,
+        "tx_type": "lfm"
+    }
+}

@@ -1,0 +1,44 @@
+{
+  "array_params": {
+    "c0": 1500,
+    "fs": 2000000,
+    "interp_factor": 8,
+    "fc": 450000,
+    "BW": 100000,
+    "Nrx": 64,
+    "Ntx": 12,
+    "pulse_len": 0.005,
+    "lightPos": [0, 0, 0],
+    "velocity": [0],
+    "snr_level": [-15],
+    "compensate_range": [0.02, 0, 0, 0, 0, 0.02],
+    "tx_interval_lambda": 0.5,
+    "rx_interval_lambda": 2
+  },
+  "tx_signal_params": {
+    "tx_type": "fdm",
+    "sector_num": 6,
+    "angles_deg": [47.5, 26, 8.5, -8.5, -26, -47.5],
+    "Subfc": [412000, 458000, 474000, 490000, 442000, 426000],
+    "SubBW": [20000, 20000, 20000, 20000, 20000, 20000],
+    "pol": ["up", "up", "up", "up", "up", "up"]
+  },
+  "rx_signal_params": {
+    "angle_step_deg": 0.1,
+    "angle_segments_deg": [
+      [-60, -34.1],
+      [-34, -17.1],
+      [-17, -0.1],
+      [0, 16.9],
+      [17, 33.9],
+      [34, 60]
+    ],
+    "array_window": "hamming",
+    "signal_window": "hamming",
+    "decimation_factor": 16
+  },
+  "file_opt_params": {
+    "esl3d_path" : "./Point Cloud/default.esl3d",
+    "output_path":"./Sonar Data"
+  }
+}

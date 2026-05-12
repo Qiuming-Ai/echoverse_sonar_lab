@@ -1,0 +1,10 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+    <world name="tank">
+         <include>
+            <name>tank_structure</name>
+            <uri>model://tank</uri>
+            <pose>0 0 1 0 0 0</pose>
+        </include>
+     </world>
+</sdf>

@@ -1,0 +1,8 @@
+#ifndef OPENCV_CVCONFIG_H
+#define OPENCV_CVCONFIG_H
+
+#define CV_VERSION_MAJOR 4
+#define CV_VERSION_MINOR 0
+#define CV_VERSION_REVISION 0
+
+#endif

@@ -1,0 +1,7 @@
+#ifndef OPENCV_MODULES_HPP
+#define OPENCV_MODULES_HPP
+
+#define HAVE_OPENCV_CORE
+#define HAVE_OPENCV_IMGPROC
+
+#endif

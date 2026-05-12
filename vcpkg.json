@@ -1,0 +1,12 @@
+{
+  "name": "echoverse-sonar-lab",
+  "version-string": "0",
+  "dependencies": [
+    "qtbase",
+    "opencv4",
+    {
+      "name": "osg",
+      "features": ["collada", "plugins"]
+    }
+  ]
+}

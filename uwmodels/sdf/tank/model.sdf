@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<sdf version="1.4">
+    <model name="tank">	
+        <pose>0 0 0 0 0 0</pose>
+        <static>true</static>
+        <link name="tank_body">
+            <visual name="visual">
+                <geometry>
+                    <mesh>
+                        <uri>model://tank/visual.osgb</uri>
+                    </mesh>
+                </geometry>
+            </visual>
+            <collision name="collision">
+                <geometry>
+                    <mesh>
+                        <uri>model://tank/collision.stl</uri>
+                    </mesh>
+                </geometry>
+            </collision>
+            <inertial>
+                <pose>0 0 -1 0 0 0</pose>
+                <inertia>
+                    <ixx>0.0</ixx>
+                    <ixy>0</ixy>
+                    <ixz>0.0</ixz>
+                    <iyy>0.0</iyy>
+                    <iyz>0</iyz>
+                    <izz>0.0</izz>
+                </inertia>
+                <mass>1.0</mass>
+            </inertial>
+        </link>
+    </model>
+</sdf>
+
