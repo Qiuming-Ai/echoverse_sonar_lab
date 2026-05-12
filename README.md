@@ -86,12 +86,10 @@ Common executables after build:
 The software code in this repository is released under the Apache License 2.0.
 See `LICENSE` for the full text and `NOTICE` for repository-level notices.
 
-Third-party models, meshes, textures, world files, and related simulation
-assets are not automatically covered by the repository code license. Their use
-and redistribution remain subject to original upstream license and attribution
+Third-party models, meshes, textures, world files, and related simulation  
+assets are not automatically covered by the repository code license. Their use  
+and redistribution remain subject to original upstream license and attribution  
 requirements.
-
-For asset-specific status tracking, see `THIRD_PARTY_ASSETS.md`.
 
 ## Notes
 
