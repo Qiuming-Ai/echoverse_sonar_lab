@@ -202,6 +202,9 @@ if(USE_REAL_SONAR_CORE)
         src/WorldFileIo.cpp
         src/SceneEditorPanel.cpp
         src/echoverse_sonar_lab.cpp
+        src/ui/DockWorkspace.cpp
+        src/ui/DraggableTabBar.cpp
+        src/ui/TabDropOverlay.cpp
         ${SONAR_UI_DIR}/SonarCanvas.cpp
         ${SONAR_UI_DIR}/SonarControlPanel.cpp
         ${SONAR_UI_DIR}/SideScanWaterfallCanvas.cpp

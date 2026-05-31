@@ -17,13 +17,35 @@ class SonarControlPanel : public QWidget
     Q_OBJECT
 protected:
     SonarCanvas *plot = nullptr;
+    QFrame *sonarDisplayFrame = nullptr;
+    QWidget *sonarColorBar = nullptr;
+    void layoutChildren();
+    void layoutSonarDisplayArea(int x, int y, int w, int h);
     void resizeEvent(QResizeEvent *event);
+    void createAdvancedSettingsPanel();
+    void ensureAdvancedFormExtraControls();
+    void emitAdvancedSonarConfigChanged();
+    void updateBandwidthUpperBound();
     QLabel *lbGain = nullptr;
     QLabel *lbRange = nullptr;
     QLabel *lbPalette = nullptr;
     QLabel *lbGrid = nullptr;
     QLineEdit *edGain = nullptr;
     QLineEdit *edRange = nullptr;
+    QWidget *advancedPanel = nullptr;
+    QFormLayout *advancedForm = nullptr;
+    QDoubleSpinBox *spRange = nullptr;
+    QDoubleSpinBox *spGain = nullptr;
+    QDoubleSpinBox *spCenterFrequency = nullptr;
+    QDoubleSpinBox *spBandwidth = nullptr;
+    QDoubleSpinBox *spBeamWidth = nullptr;
+    QDoubleSpinBox *spBeamHeight = nullptr;
+    QDoubleSpinBox *spAngleResolution = nullptr;
+    QPushButton *advancedDrawerToggleButton = nullptr;
+    bool advancedPanelEnabled = false;
+    bool advancedDrawerVisible = false;
+    bool advancedFormExtraControlsAttached = false;
+    bool syncingAdvancedControls = false;
 
 public:
     SonarControlPanel(QWidget *parent = 0);
@@ -32,6 +54,14 @@ public:
     void createRangeComponent();
     void createPaletteComponent();
     void createGridComponent();
+    void setAdvancedPanelEnabled(bool enabled);
+    void setAdvancedSonarConfig(double range_m,
+                                double gain,
+                                double center_frequency_khz,
+                                double bandwidth_khz,
+                                double beam_width_deg,
+                                double beam_height_deg,
+                                double angle_resolution_deg);
     QSlider *slGain = nullptr;
     QSlider *slRange = nullptr;
     QComboBox *comboPalette = nullptr;
@@ -58,12 +88,20 @@ protected slots:
     void onSlRangeChanged(int);
     void onComboPaletteChanged(int);
     void onCheckboxGridChanged(bool);
+    void onAdvancedControlChanged(double);
 
 signals:
     void gainChanged(int);
     void rangeChanged(int);
     void sonarPaletteChanged(int);
     void gridChanged(bool);
+    void advancedSonarConfigChanged(double range_m,
+                                    double gain,
+                                    double center_frequency_khz,
+                                    double bandwidth_khz,
+                                    double beam_width_deg,
+                                    double beam_height_deg,
+                                    double angle_resolution_deg);
 };
 
 #endif /* SONAR_WIDGET_H */

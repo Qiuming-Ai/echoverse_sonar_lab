@@ -173,16 +173,22 @@ void CameraModule::updateWidgets() {
         if (!sc.label || !sc.image.valid() || !sc.image->data() || sc.image->s() <= 0 || sc.image->t() <= 0) {
             continue;
         }
-        const QImage img(sc.image->data(), sc.image->s(), sc.image->t(), QImage::Format_RGBA8888);
-        sc.label->setPixmap(QPixmap::fromImage(img.copy().mirrored()).scaled(
-            sc.label->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        const QSize target_size = sc.label->size();
+        if (target_size.width() <= 0 || target_size.height() <= 0) {
+            continue;
+        }
+        const int bytes_per_line = std::max(1, static_cast<int>(sc.image->getRowSizeInBytes()));
+        const QImage img(sc.image->data(), sc.image->s(), sc.image->t(), bytes_per_line, QImage::Format_RGBA8888);
+        const QImage stable = img.copy().mirrored();
+        sc.label->setPixmap(QPixmap::fromImage(stable).scaled(
+            target_size, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     }
 }
 
 void CameraModule::updateViewports() {
     for (auto& sc : sub_cameras) {
-        const int tw = std::max(160, sc.label ? sc.label->width() : 320);
-        const int th = std::max(90, sc.label ? sc.label->height() : 180);
+        const int tw = std::max(1, sc.label ? sc.label->width() : 320);
+        const int th = std::max(1, sc.label ? sc.label->height() : 180);
         const double source_aspect = std::max(
             0.1,
             std::tan(sc.config.horizontal_fov_deg * kDegToRad * 0.5) /

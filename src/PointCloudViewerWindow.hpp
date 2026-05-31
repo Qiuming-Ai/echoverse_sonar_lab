@@ -8,6 +8,7 @@
 #include <QFormLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPushButton>
 #include <QSpinBox>
 #include <QTimer>
 #include <QWidget>
@@ -40,8 +41,15 @@ public:
     void renderFrame();
 
 private:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    void moveEvent(QMoveEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
     void markConfigDirty();
     void buildUi();
+    void updateInfoDrawerGeometry();
+    void updateSettingsDrawerGeometry();
     void buildPointCloudScene();
     void updateStatusLabel(const PointCloudFrame& frame);
     void autoFrameCameraToPoints();
@@ -65,7 +73,14 @@ private:
     QLineEdit* tcp_host_ = nullptr;
     QSpinBox* tcp_port_ = nullptr;
     QLabel* status_label_ = nullptr;
+    QWidget* settings_drawer_ = nullptr;
+    QPushButton* settings_drawer_toggle_button_ = nullptr;
+    bool settings_drawer_expanded_ = false;
+    QWidget* info_drawer_ = nullptr;
+    QPushButton* info_drawer_toggle_button_ = nullptr;
+    bool info_drawer_expanded_ = false;
     QWidget* osg_container_ = nullptr;
+    QWidget* palette_colorbar_ = nullptr;
     QTimer* render_timer_ = nullptr;
     bool render_blocked_by_main_viewer_ = false;
     bool config_dirty_ = false;
@@ -85,6 +100,7 @@ private:
     int palette_index_ = 1;
     bool has_auto_framed_ = false;
     bool has_external_initial_view_ = false;
+    QWidget* tracked_host_window_ = nullptr;
     mutable std::size_t render_skip_count_ = 0;
     int last_viewport_w_ = -1;
     int last_viewport_h_ = -1;

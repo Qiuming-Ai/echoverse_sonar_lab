@@ -393,6 +393,10 @@ QJsonObject toJson(const AppConfigData& cfg) {
         sonar_modules.append(m);
     }
 
+    QJsonObject ui_layout;
+    ui_layout["sonar_window_docked_in_main"] = cfg.sonar_window_docked_in_main;
+    ui_layout["sonar_workspace_split_layout"] = cfg.sonar_workspace_split_layout;
+
     QJsonObject root;
     root["scene"] = scene;
     root["pose"] = pose;
@@ -407,6 +411,7 @@ QJsonObject toJson(const AppConfigData& cfg) {
     root["mbes_camera"] = mbes_camera;
     root["point_cloud_sonar"] = point_cloud_sonar;
     root["sonar_modules"] = sonar_modules;
+    root["ui_layout"] = ui_layout;
     return root;
 }
 
@@ -424,6 +429,7 @@ AppConfigData fromJson(const QJsonObject& root) {
     const QJsonObject side_scan_sonar = root.value("side_scan_sonar").toObject();
     const QJsonObject mbes_camera = root.value("mbes_camera").toObject();
     const QJsonObject point_cloud_sonar = root.value("point_cloud_sonar").toObject();
+    const QJsonObject ui_layout = root.value("ui_layout").toObject();
     const QJsonArray sonar_modules = root.value("sonar_modules").toArray();
 
     cfg.scene.world = readString(scene, "world", cfg.scene.world);
@@ -497,6 +503,10 @@ AppConfigData fromJson(const QJsonObject& root) {
     }
 
     cfg.point_cloud_sonar = pointCloudConfigFromJson(point_cloud_sonar, cfg.point_cloud_sonar);
+    cfg.sonar_window_docked_in_main =
+        readBool(ui_layout, "sonar_window_docked_in_main", cfg.sonar_window_docked_in_main);
+    cfg.sonar_workspace_split_layout =
+        readString(ui_layout, "sonar_workspace_split_layout", cfg.sonar_workspace_split_layout).trimmed().toLower();
 
     cfg.sonar_modules.clear();
     for (int i = 0; i < sonar_modules.size(); ++i) {

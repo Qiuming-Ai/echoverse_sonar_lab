@@ -2,8 +2,15 @@
 
 #include <QFormLayout>
 #include <QFrame>
+#include <QEvent>
+#include <QFontMetrics>
+#include <QHideEvent>
 #include <QHBoxLayout>
+#include <QMoveEvent>
+#include <QPainter>
+#include <QResizeEvent>
 #include <QSignalBlocker>
+#include <QShowEvent>
 #include <QVBoxLayout>
 #include <QWindow>
 #include <QString>
@@ -29,6 +36,18 @@
 namespace standalone_mvp {
 namespace {
 
+constexpr int kInfoDrawerMargin = 8;
+constexpr int kInfoDrawerMinHeight = 56;
+constexpr int kInfoDrawerToggleWidth = 124;
+constexpr int kInfoDrawerToggleHeight = 28;
+constexpr int kInfoDrawerToggleGap = 6;
+constexpr int kInfoDrawerInnerPadding = 8;
+constexpr int kSettingsDrawerWidth = 310;
+constexpr int kSettingsDrawerMargin = 8;
+constexpr int kSettingsDrawerToggleWidth = 140;
+constexpr int kSettingsDrawerToggleHeight = 28;
+constexpr int kSettingsDrawerToggleGap = 6;
+
 QDoubleSpinBox* makeDouble(double min_v, double max_v, double step, int decimals = 2) {
     auto* box = new QDoubleSpinBox();
     box->setRange(min_v, max_v);
@@ -43,6 +62,83 @@ struct ViewAttitude {
     double roll_deg = 0.0;
     Eigen::Quaterniond q = Eigen::Quaterniond::Identity();
 };
+
+class PointCloudColorBar final : public QWidget {
+public:
+    explicit PointCloudColorBar(QWidget* parent = nullptr)
+        : QWidget(parent) {
+        colors_.assign(256, QColor(255, 255, 255));
+        setMinimumWidth(54);
+    }
+
+    void setPaletteColors(const std::vector<osg::Vec4>& palette) {
+        colors_.clear();
+        colors_.reserve(palette.size());
+        for (const auto& c : palette) {
+            const int r = std::clamp(static_cast<int>(std::lround(c.r() * 255.0f)), 0, 255);
+            const int g = std::clamp(static_cast<int>(std::lround(c.g() * 255.0f)), 0, 255);
+            const int b = std::clamp(static_cast<int>(std::lround(c.b() * 255.0f)), 0, 255);
+            colors_.emplace_back(r, g, b);
+        }
+        if (colors_.empty()) {
+            colors_.assign(256, QColor(255, 255, 255));
+        }
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent* event) override {
+        QWidget::paintEvent(event);
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, false);
+        painter.fillRect(rect(), QColor(2, 5, 10));
+
+        const QRect bar_rect(10, 8, 20, std::max(10, height() - 16));
+        const int color_count = static_cast<int>(colors_.size());
+        for (int y = 0; y < bar_rect.height(); ++y) {
+            const double t = 1.0 - static_cast<double>(y) / static_cast<double>(std::max(1, bar_rect.height() - 1));
+            const int idx = std::clamp(static_cast<int>(std::lround(t * static_cast<double>(color_count - 1))), 0, color_count - 1);
+            painter.setPen(colors_[static_cast<std::size_t>(idx)]);
+            painter.drawLine(bar_rect.left(), bar_rect.top() + y, bar_rect.right(), bar_rect.top() + y);
+        }
+        painter.setPen(QPen(QColor(220, 232, 255), 1));
+        painter.drawRect(bar_rect);
+        painter.drawText(QRect(bar_rect.right() + 6, bar_rect.top() - 2, 18, 16),
+                         Qt::AlignLeft | Qt::AlignVCenter, "1.0");
+        painter.drawText(QRect(bar_rect.right() + 6, bar_rect.bottom() - 14, 18, 16),
+                         Qt::AlignLeft | Qt::AlignVCenter, "0.0");
+    }
+
+private:
+    std::vector<QColor> colors_;
+};
+
+class InfoDrawerFrame final : public QFrame {
+public:
+    explicit InfoDrawerFrame(QWidget* parent = nullptr)
+        : QFrame(parent) {}
+
+protected:
+    void paintEvent(QPaintEvent* event) override {
+        QFrame::paintEvent(event);
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(QColor(78, 109, 144, 255), 2.0));
+        painter.drawRoundedRect(rect().adjusted(1, 1, -1, -1), 8.0, 8.0);
+    }
+};
+
+double normalizeSignedDegrees(double deg) {
+    constexpr double kFullTurn = 360.0;
+    while (deg >= 180.0) {
+        deg -= kFullTurn;
+    }
+    while (deg < -180.0) {
+        deg += kFullTurn;
+    }
+    return deg;
+}
 
 ViewAttitude currentViewAttitude(osgViewer::Viewer& viewer) {
     ViewAttitude att;
@@ -92,9 +188,9 @@ ViewAttitude currentViewAttitude(osgViewer::Viewer& viewer) {
         roll = 0.0;
         yaw = std::atan2(-R(0, 1), R(1, 1));
     }
-    att.yaw_deg = yaw * kRad2Deg;
-    att.pitch_deg = pitch * kRad2Deg;
-    att.roll_deg = roll * kRad2Deg;
+    att.yaw_deg = normalizeSignedDegrees(yaw * kRad2Deg);
+    att.pitch_deg = normalizeSignedDegrees(pitch * kRad2Deg);
+    att.roll_deg = normalizeSignedDegrees(roll * kRad2Deg);
     return att;
 }
 
@@ -132,9 +228,12 @@ void PointCloudViewerWindow::buildUi() {
     content->setSpacing(8);
     root->addLayout(content, 1);
 
-    auto* left_panel = new QWidget(this);
-    left_panel->setFixedWidth(310);
-    controls_form_ = new QFormLayout(left_panel);
+    settings_drawer_ = new QFrame(this);
+    settings_drawer_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
+    settings_drawer_->setAttribute(Qt::WA_ShowWithoutActivating, true);
+    settings_drawer_->setStyleSheet(
+        "QFrame{background:rgba(9,20,35,220);border:1px solid #4e6d90;border-radius:8px;}");
+    controls_form_ = new QFormLayout(settings_drawer_);
     auto* form = controls_form_;
     form->setContentsMargins(6, 6, 6, 6);
     form->setSpacing(6);
@@ -146,18 +245,18 @@ void PointCloudViewerWindow::buildUi() {
     vertical_res_deg_ = makeDouble(0.01, 20.0, 0.01, 3);
     horizontal_fov_deg_ = makeDouble(1.0, 179.0, 0.5, 2);
     vertical_fov_deg_ = makeDouble(1.0, 179.0, 0.5, 2);
-    palette_combo_ = new QComboBox(this);
+    palette_combo_ = new QComboBox(settings_drawer_);
     palette_combo_->addItem("Jet", 0);
     palette_combo_->addItem("Hot", 1);
     palette_combo_->addItem("Gray", 2);
     palette_combo_->addItem("Bronze", 3);
-    show_coordinate_overlay_ = new QCheckBox("Show Coordinate Overlay", this);
+    show_coordinate_overlay_ = new QCheckBox("Show Coordinate Overlay", settings_drawer_);
     show_coordinate_overlay_->setChecked(true);
-    tcp_output_enabled_ = new QCheckBox("Enable TCP Output", this);
-    file_output_enabled_ = new QCheckBox("Enable File Output", this);
-    tcp_host_ = new QLineEdit(this);
+    tcp_output_enabled_ = new QCheckBox("Enable TCP Output", settings_drawer_);
+    file_output_enabled_ = new QCheckBox("Enable File Output", settings_drawer_);
+    tcp_host_ = new QLineEdit(settings_drawer_);
     tcp_host_->setPlaceholderText("0.0.0.0");
-    tcp_port_ = new QSpinBox(this);
+    tcp_port_ = new QSpinBox(settings_drawer_);
     tcp_port_->setRange(1, 65535);
     tcp_port_->setValue(30001);
 
@@ -174,8 +273,6 @@ void PointCloudViewerWindow::buildUi() {
     form->addRow("", file_output_enabled_);
     form->addRow("TCP Host", tcp_host_);
     form->addRow("TCP Port", tcp_port_);
-    content->addWidget(left_panel, 0);
-
     auto connect_dirty = [this](QDoubleSpinBox* box) {
         connect(box, qOverload<double>(&QDoubleSpinBox::valueChanged), [this](double) { markConfigDirty(); });
     };
@@ -216,18 +313,221 @@ void PointCloudViewerWindow::buildUi() {
 #else
     QWindow* osg_foreign_window = nullptr;
 #endif
+    auto* frame_layout = new QHBoxLayout(viewer_frame);
+    frame_layout->setContentsMargins(4, 4, 4, 4);
+    frame_layout->setSpacing(6);
     if (osg_foreign_window) {
         osg_container_ = QWidget::createWindowContainer(osg_foreign_window, viewer_frame);
         osg_container_->setFocusPolicy(Qt::StrongFocus);
-        auto* frame_layout = new QVBoxLayout(viewer_frame);
-        frame_layout->setContentsMargins(4, 4, 4, 4);
-        frame_layout->addWidget(osg_container_);
+        frame_layout->addWidget(osg_container_, 1);
+    } else {
+        auto* fallback = new QLabel("OSG viewer unavailable", viewer_frame);
+        fallback->setAlignment(Qt::AlignCenter);
+        fallback->setStyleSheet("QLabel{border:1px dashed #4e6d90;color:#9fb5d3;}");
+        frame_layout->addWidget(fallback, 1);
     }
+    palette_colorbar_ = new PointCloudColorBar(viewer_frame);
+    frame_layout->addWidget(palette_colorbar_, 0);
 
-    status_label_ = new QLabel(this);
+    settings_drawer_toggle_button_ = new QPushButton();
+    settings_drawer_toggle_button_->setAttribute(Qt::WA_ShowWithoutActivating, true);
+    settings_drawer_toggle_button_->setParent(this, Qt::Tool | Qt::FramelessWindowHint);
+    settings_drawer_toggle_button_->setText("Show Settings");
+    settings_drawer_toggle_button_->setCursor(Qt::PointingHandCursor);
+    settings_drawer_toggle_button_->setStyleSheet(
+        "QPushButton{background:rgba(9,20,35,200);color:#eaf2ff;border:1px solid #4e6d90;border-radius:6px;padding:4px 10px;}"
+        "QPushButton:hover{background:rgba(20,35,58,220);}");
+    connect(settings_drawer_toggle_button_, &QPushButton::clicked, this, [this]() {
+        settings_drawer_expanded_ = !settings_drawer_expanded_;
+        if (settings_drawer_) {
+            settings_drawer_->setVisible(settings_drawer_expanded_);
+        }
+        if (settings_drawer_toggle_button_) {
+            settings_drawer_toggle_button_->setText(settings_drawer_expanded_ ? "Hide Settings" : "Show Settings");
+        }
+        updateSettingsDrawerGeometry();
+    });
+
+    info_drawer_ = new InfoDrawerFrame(this);
+    info_drawer_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
+    info_drawer_->setAttribute(Qt::WA_ShowWithoutActivating, true);
+    info_drawer_->setAttribute(Qt::WA_TranslucentBackground, true);
+    info_drawer_->setAttribute(Qt::WA_StyledBackground, true);
+    info_drawer_->setStyleSheet(
+        "QFrame{background:rgba(0,0,0,0);border:none;}");
+    auto* drawer_layout = new QVBoxLayout(info_drawer_);
+    drawer_layout->setContentsMargins(kInfoDrawerInnerPadding, kInfoDrawerInnerPadding, kInfoDrawerInnerPadding, kInfoDrawerInnerPadding);
+    drawer_layout->setSpacing(0);
+    status_label_ = new QLabel(info_drawer_);
     status_label_->setWordWrap(true);
-    status_label_->setStyleSheet("QLabel{background:#091423;border:1px solid #4e6d90;padding:6px;}");
-    root->addWidget(status_label_, 0);
+    status_label_->setStyleSheet(
+        "QLabel{background:rgba(9,20,35,220);border:none;border-radius:6px;color:#d9e7ff;padding:6px;}");
+    drawer_layout->addWidget(status_label_);
+
+    info_drawer_toggle_button_ = new QPushButton();
+    info_drawer_toggle_button_->setAttribute(Qt::WA_ShowWithoutActivating, true);
+    info_drawer_toggle_button_->setParent(this, Qt::Tool | Qt::FramelessWindowHint);
+    info_drawer_toggle_button_->setText("Show Info");
+    info_drawer_toggle_button_->setCursor(Qt::PointingHandCursor);
+    info_drawer_toggle_button_->setStyleSheet(
+        "QPushButton{background:rgba(9,20,35,200);color:#eaf2ff;border:1px solid #4e6d90;border-radius:6px;padding:4px 10px;}"
+        "QPushButton:hover{background:rgba(20,35,58,220);}");
+    connect(info_drawer_toggle_button_, &QPushButton::clicked, this, [this]() {
+        info_drawer_expanded_ = !info_drawer_expanded_;
+        if (info_drawer_) {
+            info_drawer_->setVisible(info_drawer_expanded_);
+        }
+        if (info_drawer_toggle_button_) {
+            info_drawer_toggle_button_->setText(info_drawer_expanded_ ? "Hide Info" : "Show Info");
+        }
+        updateInfoDrawerGeometry();
+    });
+
+    updateInfoDrawerGeometry();
+    updateSettingsDrawerGeometry();
+}
+
+void PointCloudViewerWindow::moveEvent(QMoveEvent* event) {
+    QWidget::moveEvent(event);
+    updateInfoDrawerGeometry();
+    updateSettingsDrawerGeometry();
+}
+
+void PointCloudViewerWindow::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    updateInfoDrawerGeometry();
+    updateSettingsDrawerGeometry();
+}
+
+void PointCloudViewerWindow::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    QWidget* host = window();
+    if (host != tracked_host_window_) {
+        if (tracked_host_window_) {
+            tracked_host_window_->removeEventFilter(this);
+        }
+        tracked_host_window_ = host;
+        if (tracked_host_window_) {
+            tracked_host_window_->installEventFilter(this);
+        }
+    }
+    updateInfoDrawerGeometry();
+    updateSettingsDrawerGeometry();
+    if (settings_drawer_toggle_button_) {
+        settings_drawer_toggle_button_->show();
+        settings_drawer_toggle_button_->raise();
+    }
+    if (settings_drawer_) {
+        settings_drawer_->setVisible(settings_drawer_expanded_);
+        settings_drawer_->raise();
+    }
+    if (info_drawer_toggle_button_) {
+        info_drawer_toggle_button_->show();
+        info_drawer_toggle_button_->raise();
+    }
+    if (info_drawer_) {
+        info_drawer_->setVisible(info_drawer_expanded_);
+        info_drawer_->raise();
+    }
+}
+
+void PointCloudViewerWindow::hideEvent(QHideEvent* event) {
+    QWidget::hideEvent(event);
+    if (info_drawer_) {
+        info_drawer_->hide();
+    }
+    if (info_drawer_toggle_button_) {
+        info_drawer_toggle_button_->hide();
+    }
+    if (settings_drawer_) {
+        settings_drawer_->hide();
+    }
+    if (settings_drawer_toggle_button_) {
+        settings_drawer_toggle_button_->hide();
+    }
+}
+
+bool PointCloudViewerWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == tracked_host_window_) {
+        switch (event->type()) {
+        case QEvent::Move:
+        case QEvent::Resize:
+        case QEvent::WindowStateChange:
+        case QEvent::Show:
+            updateInfoDrawerGeometry();
+            updateSettingsDrawerGeometry();
+            break;
+        case QEvent::Hide:
+            if (info_drawer_) info_drawer_->hide();
+            if (info_drawer_toggle_button_) info_drawer_toggle_button_->hide();
+            if (settings_drawer_) settings_drawer_->hide();
+            if (settings_drawer_toggle_button_) settings_drawer_toggle_button_->hide();
+            break;
+        default:
+            break;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void PointCloudViewerWindow::updateSettingsDrawerGeometry() {
+    if (!settings_drawer_ || !settings_drawer_toggle_button_) {
+        return;
+    }
+    if (!isVisible() || !window() || !window()->isVisible()) {
+        settings_drawer_->setVisible(false);
+        settings_drawer_toggle_button_->setVisible(false);
+        return;
+    }
+    const int drawer_w = kSettingsDrawerWidth;
+    const int drawer_h = std::max(240, std::min(height() - 2 * kSettingsDrawerMargin - kSettingsDrawerToggleHeight - kSettingsDrawerToggleGap, 520));
+    const int drawer_x = kSettingsDrawerMargin;
+    const int drawer_y = kSettingsDrawerMargin + kSettingsDrawerToggleHeight + kSettingsDrawerToggleGap;
+    const int button_x = kSettingsDrawerMargin;
+    const int button_y = kSettingsDrawerMargin;
+    const QPoint top_left = mapToGlobal(QPoint(0, 0));
+    settings_drawer_->setGeometry(top_left.x() + drawer_x, top_left.y() + drawer_y, drawer_w, drawer_h);
+    settings_drawer_toggle_button_->setGeometry(
+        top_left.x() + button_x, top_left.y() + button_y, kSettingsDrawerToggleWidth, kSettingsDrawerToggleHeight);
+    settings_drawer_->setVisible(isVisible() && settings_drawer_expanded_);
+    settings_drawer_toggle_button_->setVisible(isVisible());
+    settings_drawer_->raise();
+    settings_drawer_toggle_button_->raise();
+}
+
+void PointCloudViewerWindow::updateInfoDrawerGeometry() {
+    if (!info_drawer_ || !info_drawer_toggle_button_) {
+        return;
+    }
+    if (!isVisible() || !window() || !window()->isVisible()) {
+        info_drawer_->setVisible(false);
+        info_drawer_toggle_button_->setVisible(false);
+        return;
+    }
+    const int button_x = (width() - kInfoDrawerToggleWidth) / 2;
+    const int drawer_w = std::max(120, width() - 2 * kInfoDrawerMargin);
+    const int text_w = std::max(80, drawer_w - 2 * kInfoDrawerInnerPadding - 12);
+    int drawer_h = kInfoDrawerMinHeight;
+    if (status_label_) {
+        const QFontMetrics fm(status_label_->font());
+        const QRect text_rect = fm.boundingRect(QRect(0, 0, text_w, 100000), Qt::TextWordWrap, status_label_->text());
+        drawer_h = text_rect.height() + 2 * kInfoDrawerInnerPadding + 12;
+    }
+    const int max_drawer_h = std::max(kInfoDrawerMinHeight, height() - 2 * kInfoDrawerMargin - kInfoDrawerToggleHeight - kInfoDrawerToggleGap);
+    drawer_h = std::clamp(drawer_h, kInfoDrawerMinHeight, max_drawer_h);
+    const int drawer_x = (width() - drawer_w) / 2;
+    const int drawer_y = std::max(kInfoDrawerMargin, height() - drawer_h - kInfoDrawerMargin);
+    const int button_y = info_drawer_expanded_
+        ? std::max(kInfoDrawerMargin, drawer_y - kInfoDrawerToggleHeight - kInfoDrawerToggleGap)
+        : std::max(kInfoDrawerMargin, height() - kInfoDrawerToggleHeight - kInfoDrawerMargin);
+    const QPoint top_left = mapToGlobal(QPoint(0, 0));
+    info_drawer_->setGeometry(top_left.x() + drawer_x, top_left.y() + drawer_y, drawer_w, drawer_h);
+    info_drawer_toggle_button_->setGeometry(
+        top_left.x() + button_x, top_left.y() + button_y, kInfoDrawerToggleWidth, kInfoDrawerToggleHeight);
+    info_drawer_->setVisible(isVisible() && info_drawer_expanded_);
+    info_drawer_toggle_button_->setVisible(isVisible());
+    info_drawer_->raise();
+    info_drawer_toggle_button_->raise();
 }
 
 void PointCloudViewerWindow::setRangeMeters(double range_m) {
@@ -298,7 +598,7 @@ void PointCloudViewerWindow::buildPointCloudScene() {
     viewer_.setSceneData(scene_root_);
     if (!has_external_initial_view_) {
         if (auto* tb = dynamic_cast<osgGA::TrackballManipulator*>(viewer_.getCameraManipulator())) {
-        // Default home uses 180deg roll baseline (up axis flipped).
+        // Default home uses a flipped up-axis baseline (reported roll: -180deg).
         tb->setHomePosition(osg::Vec3d(-8.0, -8.0, 5.0), osg::Vec3d(0.0, 0.0, 0.0), osg::Vec3d(0.0, 0.0, -1.0));
         tb->home(0.0);
     }
@@ -306,31 +606,17 @@ void PointCloudViewerWindow::buildPointCloudScene() {
 }
 
 void PointCloudViewerWindow::setInitialViewFromPose(const Eigen::Affine3d& pose_world) {
+    (void)pose_world;
     auto* tb = dynamic_cast<osgGA::TrackballManipulator*>(viewer_.getCameraManipulator());
     if (!tb) {
         return;
     }
 
-    Eigen::Vector3d forward = pose_world.linear().col(0);
-    Eigen::Vector3d up = pose_world.linear().col(2);
-    if (forward.norm() < 1e-9) {
-        forward = Eigen::Vector3d::UnitX();
-    } else {
-        forward.normalize();
-    }
-    // Keep up vector orthogonal to forward to avoid unstable look-at.
-    up = up - forward * forward.dot(up);
-    if (up.norm() < 1e-9) {
-        up = Eigen::Vector3d::UnitZ();
-        up = up - forward * forward.dot(up);
-    }
-    up.normalize();
-    // Use roll=180deg baseline so the default normal view reports Y/P/R ~= 0/0/180.
-    up = -up;
-    // Display in camera-local coordinates (sensor at origin): keep orientation,
-    // but place viewer near origin instead of world translation.
+    // Point-cloud display uses camera-local frame; keep startup view fixed at 0/0/-180.
+    const Eigen::Vector3d forward = Eigen::Vector3d::UnitX();
+    const Eigen::Vector3d up = -Eigen::Vector3d::UnitZ();
     const Eigen::Vector3d center = Eigen::Vector3d::Zero();
-    const Eigen::Vector3d eye = center - forward * 6.0 + up * 1.8;
+    const Eigen::Vector3d eye = center - forward * 6.0;
 
     const osg::Vec3d eye_osg(eye.x(), eye.y(), eye.z());
     const osg::Vec3d center_osg(center.x(), center.y(), center.z());
@@ -570,7 +856,7 @@ void PointCloudViewerWindow::autoFrameCameraToPoints() {
     const osg::Vec3d extents = (pmax - pmin) * 0.5;
     const double radius = std::max(1.0, extents.length());
     const osg::Vec3d eye = center + osg::Vec3d(-2.5 * radius, -2.2 * radius, 1.4 * radius);
-    // Keep auto-framed view consistent with 180deg roll baseline.
+    // Keep auto-framed view consistent with the flipped up-axis baseline.
     const osg::Vec3d up(0.0, 0.0, -1.0);
 
     tb->setTransformation(eye, center, up);
@@ -597,9 +883,19 @@ void PointCloudViewerWindow::rebuildPalette(int palette_index) {
             palette_.emplace_back(1.0f, 1.0f, 1.0f, 1.0f);
         }
     }
+    if (auto* colorbar = dynamic_cast<PointCloudColorBar*>(palette_colorbar_)) {
+        colorbar->setPaletteColors(palette_);
+    }
 }
 
 void PointCloudViewerWindow::renderFrame() {
+    if (!isVisible() || !window() || !window()->isVisible()) {
+        return;
+    }
+    // Keep floating tool windows aligned with host window even when move events
+    // don't reach this page (e.g. inside tabbed containers).
+    updateInfoDrawerGeometry();
+    updateSettingsDrawerGeometry();
     if (render_blocked_by_main_viewer_) {
         return;
     }

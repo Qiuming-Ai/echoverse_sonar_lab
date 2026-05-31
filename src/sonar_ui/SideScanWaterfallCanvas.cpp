@@ -21,7 +21,9 @@ const QColor kSonarBackgroundColor(80, 80, 80);
 SideScanWaterfallCanvas::SideScanWaterfallCanvas(QWidget* parent) : QFrame(parent)
 {
     applyColormap(sonar_palette::PALETTE_JET);
-    setMinimumSize(400, 300);
+    // Low lower-bound while keeping normal splitter behavior.
+    setMinimumSize(120, 80);
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     setFrameShape(QFrame::NoFrame);
     QPalette Pal = palette();
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)

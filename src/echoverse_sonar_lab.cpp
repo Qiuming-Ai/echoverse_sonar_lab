@@ -4,6 +4,7 @@
 #include "AppConfig.hpp"
 #include "InfoPanelWidget.hpp"
 #include "SettingsDialog.hpp"
+#include "ui/DockWorkspace.hpp"
 #include "PointCloudSonarSimulation.hpp"
 #include "PointCloudTcpStreamer.hpp"
 #include "PointCloudViewerWindow.hpp"
@@ -24,13 +25,13 @@
 #include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMenu>
 #include <QPixmap>
 #include <QProcess>
 #include <QPushButton>
 #include <QObject>
 #include <QString>
 #include <QTimer>
-#include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QWindow>
@@ -593,6 +594,8 @@ int main(int argc, char** argv) {
     }
     standalone_mvp::AppConfigStore config_store(config_path_resolved);
     standalone_mvp::AppConfigData app_cfg = config_store.load();
+    const bool saved_sonar_docked_in_main = app_cfg.sonar_window_docked_in_main;
+    const QString saved_sonar_split_layout = app_cfg.sonar_workspace_split_layout.trimmed().toLower();
     const QString project_dir =
         QFileInfo(config_store.path()).absolutePath().isEmpty()
             ? QDir::currentPath()
@@ -952,36 +955,39 @@ int main(int argc, char** argv) {
               << ")" << std::endl;
 
     QWidget sonar_tab_window;
-    QTabWidget* sonar_tabs = nullptr;
+    DockWorkspace* sonar_workspace = nullptr;
     if (use_rock_sonar_ui) {
         sonar_tab_window.setWindowTitle(QStringLiteral("EchoVerse Sonar Lab - Sonar Images"));
         sonar_tab_window.resize(1100, 720);
         sonar_tab_window.setStyleSheet(QStringLiteral("QWidget{background:#505050;color:#eaf4ff;}"));
         auto* sonar_tab_layout = new QVBoxLayout(&sonar_tab_window);
         sonar_tab_layout->setContentsMargins(4, 4, 4, 4);
-        sonar_tabs = new QTabWidget(&sonar_tab_window);
-        sonar_tab_layout->addWidget(sonar_tabs);
+        sonar_workspace = new DockWorkspace(&sonar_tab_window);
+        sonar_tab_layout->addWidget(sonar_workspace);
     }
     if (use_rock_sonar_ui && sonar) {
-        fls_module.setupWidget(sonar_tabs, QStringLiteral("%1 (FLS)").arg(fls_module_cfg.name));
+        fls_module.setupWidget(sonar_workspace, QStringLiteral("%1 (FLS)").arg(fls_module_cfg.name));
     }
     if (use_rock_sonar_ui && mbes_sonar) {
-        mbes_module.setupWidget(sonar_tabs, QStringLiteral("%1 (MBES)").arg(mbes_module_cfg.name));
+        mbes_module.setupWidget(sonar_workspace, QStringLiteral("%1 (MBES)").arg(mbes_module_cfg.name));
     }
     if (use_rock_sonar_ui) {
         for (auto& extra : extra_fls_modules_rt) {
             if (!extra->sonar) {
                 continue;
             }
-            extra->setupWidget(sonar_tabs, QStringLiteral("%1 (FLS)").arg(extra->module_cfg.name));
+            extra->setupWidget(sonar_workspace, QStringLiteral("%1 (FLS)").arg(extra->module_cfg.name));
         }
         for (auto& extra : extra_mbes_modules_rt) {
             if (!extra->sonar) {
                 continue;
             }
-            extra->setupWidget(sonar_tabs, QStringLiteral("%1 (MBES)").arg(extra->module_cfg.name));
+            extra->setupWidget(sonar_workspace, QStringLiteral("%1 (MBES)").arg(extra->module_cfg.name));
         }
-        std::cout << "[gui] sonar control tabs host ready (tabs=" << (sonar_tabs ? sonar_tabs->count() : 0) << ")"
+        const int tab_count = (sonar_workspace && sonar_workspace->primaryTabWidget())
+            ? sonar_workspace->primaryTabWidget()->count()
+            : 0;
+        std::cout << "[gui] sonar control tabs host ready (tabs=" << tab_count << ")"
                   << std::endl;
     }
     {
@@ -992,11 +998,11 @@ int main(int argc, char** argv) {
              Eigen::AngleAxisd(configured_pose.pitch, Eigen::Vector3d::UnitY()) *
              Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitX()))
                 .toRotationMatrix();
-        fls_module.initPointCloudRuntime(root, initial_pose, 80, 700, project_dir, sonar_tabs);
+        fls_module.initPointCloudRuntime(root, initial_pose, 80, 700, project_dir, sonar_workspace);
         int extra_idx = 0;
         for (auto& extra : extra_fls_modules_rt) {
             extra->initPointCloudRuntime(
-                root, initial_pose, 120 + 40 * (extra_idx % 3), 740 + 40 * extra_idx, project_dir, sonar_tabs);
+                root, initial_pose, 120 + 40 * (extra_idx % 3), 740 + 40 * extra_idx, project_dir, sonar_workspace);
             ++extra_idx;
         }
     }
@@ -1008,11 +1014,11 @@ int main(int argc, char** argv) {
              Eigen::AngleAxisd(configured_pose.pitch, Eigen::Vector3d::UnitY()) *
              Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitX()))
                 .toRotationMatrix();
-        mbes_module.initPointCloudRuntime(root, initial_pose, 80, 700, project_dir, sonar_tabs);
+        mbes_module.initPointCloudRuntime(root, initial_pose, 80, 700, project_dir, sonar_workspace);
         int extra_idx = 0;
         for (auto& extra : extra_mbes_modules_rt) {
             extra->initPointCloudRuntime(
-                root, initial_pose, 80 + 40 * (extra_idx % 3), 700 + 40 * extra_idx, project_dir, sonar_tabs);
+                root, initial_pose, 80 + 40 * (extra_idx % 3), 700 + 40 * extra_idx, project_dir, sonar_workspace);
             ++extra_idx;
         }
     }
@@ -1103,21 +1109,27 @@ int main(int argc, char** argv) {
 
     QWidget dashboard_window;
     dashboard_window.setWindowTitle("EchoVerse Sonar Lab");
-    dashboard_window.setFixedSize(1660, 600);
+    dashboard_window.resize(1660, 600);
+    dashboard_window.setMinimumSize(1100, 560);
     dashboard_window.setStyleSheet("QWidget{background:#000000;color:#eaf4ff;}");
     auto* root_layout = new QVBoxLayout(&dashboard_window);
     root_layout->setContentsMargins(10, 10, 10, 10);
     root_layout->setSpacing(8);
     auto* top_bar = new QHBoxLayout();
     top_bar->addStretch();
+    QPushButton sonar_dock_button("Show Sonar", &dashboard_window);
     QPushButton settings_button("Settings", &dashboard_window);
     QPushButton scene_editor_button("Scene Editor", &dashboard_window);
+    sonar_dock_button.setStyleSheet(
+        "QPushButton{background:#3b4f66;color:#ffffff;border:1px solid #a7c6e8;border-radius:6px;padding:6px 12px;font-weight:600;}"
+        "QPushButton:hover{background:#4b6888;}");
     scene_editor_button.setStyleSheet(
         "QPushButton{background:#295f3b;color:#ffffff;border:1px solid #8ac0a0;border-radius:6px;padding:6px 12px;font-weight:600;}"
         "QPushButton:hover{background:#3a7a4e;}");
     settings_button.setStyleSheet(
         "QPushButton{background:#1f5c97;color:#ffffff;border:1px solid #97c0e6;border-radius:6px;padding:6px 12px;font-weight:600;}"
         "QPushButton:hover{background:#2f74b5;}");
+    top_bar->addWidget(&sonar_dock_button, 0, Qt::AlignRight);
     top_bar->addWidget(&scene_editor_button, 0, Qt::AlignRight);
     top_bar->addWidget(&settings_button, 0, Qt::AlignRight);
     root_layout->addLayout(top_bar);
@@ -1125,9 +1137,11 @@ int main(int argc, char** argv) {
     QWidget side_scan_window;
     auto add_sss_instance_ui = [&](SssModule& mod, const QString& tab_label, bool ready) {
         QWidget* sss_host = nullptr;
-        if (sonar_tabs) {
+        if (sonar_workspace) {
             sss_host = new QWidget();
-            sonar_tabs->addTab(sss_host, tab_label);
+            sss_host->setMinimumSize(120, 80);
+            sss_host->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+            sonar_workspace->addTab(sss_host, tab_label);
         } else {
             side_scan_window.setWindowTitle(QString::fromLatin1("Side Scan — waterfall (SSS A port | SSS B starboard)"));
             side_scan_window.resize(side_scan_window_width, side_scan_window_height);
@@ -1140,7 +1154,9 @@ int main(int argc, char** argv) {
         auto* side_scan_title = new QLabel(
             QStringLiteral("Side-scan waterfall: horizontal axis is distance (-range to +range), vertical axis is time; newest echoes appear at the bottom."),
             sss_host);
+        side_scan_title->setWordWrap(true);
         side_scan_title->setAlignment(Qt::AlignCenter);
+        side_scan_title->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
         side_scan_title->setStyleSheet("QLabel{color:#dcefff;background:#000000;font-size:12px;font-weight:600;}");
         side_scan_layout->addWidget(side_scan_title);
         if (ready) {
@@ -1167,21 +1183,55 @@ int main(int argc, char** argv) {
             const bool ready = extra->sonar_a && extra->sonar_b;
             add_sss_instance_ui(*extra, QStringLiteral("SSS %1").arg(extra->module_cfg.name), ready);
         }
-        if (sonar_tabs) {
-            sonar_tab_window.resize(std::max(1100, side_scan_window_width), std::max(720, side_scan_window_height));
-        } else {
+        if (!sonar_workspace) {
             side_scan_window.show();
         }
     }
-    if (use_rock_sonar_ui && sonar_tabs && sonar_tabs->count() > 0) {
-        sonar_tab_window.show();
+    const bool has_sonar_tabs =
+        use_rock_sonar_ui && sonar_workspace && sonar_workspace->primaryTabWidget() &&
+        sonar_workspace->primaryTabWidget()->count() > 0;
+    auto preset_from_saved_layout = [&](const QString& text) {
+        if (text == "horizontal") return DockWorkspace::LayoutPreset::Horizontal;
+        if (text == "vertical") return DockWorkspace::LayoutPreset::Vertical;
+        if (text == "quad") return DockWorkspace::LayoutPreset::Quad;
+        return DockWorkspace::LayoutPreset::Single;
+    };
+    if (has_sonar_tabs && sonar_workspace) {
+        sonar_workspace->applyLayoutPreset(preset_from_saved_layout(saved_sonar_split_layout));
     }
 
-    auto* content_layout = new QHBoxLayout();
+    auto* content_container = new QWidget(&dashboard_window);
+    content_container->setMinimumHeight(0);
+    content_container->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    auto* content_layout = new QHBoxLayout(content_container);
     content_layout->setSpacing(10);
-    standalone_mvp::InfoPanelWidget info_panel(&dashboard_window);
-    info_panel.setFixedWidth(360);
-    content_layout->addWidget(&info_panel, 0);
+    constexpr int kInfoDrawerWidth = 360;
+    constexpr int kInfoDrawerMargin = 10;
+    constexpr int kInfoDrawerTop = 54;
+    constexpr int kInfoDrawerBottom = 10;
+    bool info_drawer_visible = false;
+    auto* info_panel = new standalone_mvp::InfoPanelWidget(&dashboard_window);
+    info_panel->setFixedWidth(kInfoDrawerWidth);
+    info_panel->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    info_panel->setAttribute(Qt::WA_ShowWithoutActivating, true);
+    info_panel->setVisible(info_drawer_visible);
+    info_panel->setStyleSheet(
+        "QWidget{background:#000000;border:1px solid #6ea2d4;}");
+    QPushButton info_drawer_toggle_button("Show Info", &dashboard_window);
+    info_drawer_toggle_button.setAutoDefault(false);
+    info_drawer_toggle_button.setDefault(false);
+    info_drawer_toggle_button.setStyleSheet(
+        "QPushButton{background:#1f5c97;color:#ffffff;border:1px solid #97c0e6;border-radius:6px;padding:6px 12px;font-weight:600;}"
+        "QPushButton:hover{background:#2f74b5;}");
+    QObject::connect(&info_drawer_toggle_button, &QPushButton::clicked, [&]() {
+        info_drawer_visible = !info_drawer_visible;
+        info_panel->setVisible(info_drawer_visible);
+        info_drawer_toggle_button.setText(info_drawer_visible ? "Hide Info" : "Show Info");
+        if (info_drawer_visible) {
+            info_panel->raise();
+        }
+        info_drawer_toggle_button.raise();
+    });
 
     auto* viewer_frame = new QFrame(&dashboard_window);
     viewer_frame->setStyleSheet("QFrame{background:#000000;border:1px solid #6ea2d4;}");
@@ -1201,13 +1251,38 @@ int main(int argc, char** argv) {
         scene_editor->setPauseSonarCallback([&](bool on) { scene_edit_pauses_sonar.store(on); });
     }
     scene_editor_dialog_layout->addWidget(scene_editor);
-    root_layout->addLayout(content_layout, 1);
+    auto* sonar_dock_panel = new QWidget(&dashboard_window);
+    sonar_dock_panel->setStyleSheet("QWidget{background:#505050;color:#eaf4ff;border:1px solid #6ea2d4;}");
+    sonar_dock_panel->setMinimumHeight(0);
+    sonar_dock_panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    auto* sonar_dock_layout = new QVBoxLayout(sonar_dock_panel);
+    sonar_dock_layout->setContentsMargins(4, 4, 4, 4);
+    sonar_dock_layout->setSpacing(0);
+    if (has_sonar_tabs && sonar_workspace) {
+        sonar_workspace->setParent(sonar_dock_panel);
+        sonar_dock_layout->addWidget(sonar_workspace, 1);
+    }
+    QWidget sonar_floating_window;
+    sonar_floating_window.setWindowTitle(QStringLiteral("EchoVerse Sonar Lab - Sonar Images"));
+    sonar_floating_window.resize(1100, 720);
+    sonar_floating_window.setStyleSheet(QStringLiteral("QWidget{background:#505050;color:#eaf4ff;}"));
+    auto* sonar_floating_layout = new QVBoxLayout(&sonar_floating_window);
+    sonar_floating_layout->setContentsMargins(4, 4, 4, 4);
+    sonar_floating_layout->setSpacing(0);
+    sonar_floating_window.setAttribute(Qt::WA_QuitOnClose, false);
+    auto* main_vertical_splitter = new QSplitter(Qt::Vertical, &dashboard_window);
+    main_vertical_splitter->setChildrenCollapsible(false);
+    main_vertical_splitter->addWidget(content_container);
+    main_vertical_splitter->addWidget(sonar_dock_panel);
+    main_vertical_splitter->setStretchFactor(0, 1);
+    main_vertical_splitter->setStretchFactor(1, 1);
+    root_layout->addWidget(main_vertical_splitter, 1);
 
     auto* viewer_host = new QWidget(viewer_frame);
     viewer_host->setStyleSheet("QWidget{background:#000000;border:1px solid #3f6c95;}");
     auto* subcamera_panel = new QWidget(viewer_frame);
     subcamera_panel->setStyleSheet("QWidget{background:#0d121a;border:1px solid #35506b;}");
-    auto* subcamera_layout = new QHBoxLayout(subcamera_panel);
+    auto* subcamera_layout = new QVBoxLayout(subcamera_panel);
     subcamera_layout->setContentsMargins(6, 6, 6, 6);
     subcamera_layout->setSpacing(6);
     auto makeSubcameraLabel = [&](const QString& title) {
@@ -1220,7 +1295,7 @@ int main(int argc, char** argv) {
         t->setStyleSheet("QLabel{color:#cfe8ff;font-size:11px;font-weight:600;background:transparent;}");
         auto* l = new QLabel("disabled", box);
         l->setAlignment(Qt::AlignCenter);
-        l->setMinimumSize(160, 90);
+        l->setMinimumSize(120, 70);
         l->setStyleSheet("QLabel{color:#97a8ba;background:#000000;border:1px solid #22364a;}");
         v->addWidget(t);
         v->addWidget(l, 1);
@@ -1254,13 +1329,25 @@ int main(int argc, char** argv) {
     }
 
     auto update_viewport_layout = [&]() {
+        info_drawer_toggle_button.move(kInfoDrawerMargin, kInfoDrawerMargin);
+        if (info_panel) {
+            const int drawer_h = std::max(
+                120, dashboard_window.height() - kInfoDrawerTop - kInfoDrawerBottom);
+            const QPoint global_top_left = dashboard_window.mapToGlobal(QPoint(kInfoDrawerMargin, kInfoDrawerTop));
+            info_panel->setGeometry(global_top_left.x(), global_top_left.y(), kInfoDrawerWidth, drawer_h);
+            info_panel->setVisible(info_drawer_visible);
+            if (info_drawer_visible) {
+                info_panel->raise();
+            }
+        }
+        info_drawer_toggle_button.raise();
         const QRect area = viewer_frame->contentsRect().adjusted(8, 8, -8, -8);
         if (area.width() <= 0 || area.height() <= 0) {
             return;
         }
-        const int sub_h = std::max(110, area.height() / 4);
-        const QRect main_area(area.x(), area.y(), area.width(), std::max(80, area.height() - sub_h - 6));
-        subcamera_panel->setGeometry(area.x(), main_area.bottom() + 6, area.width(), sub_h);
+        const int side_w = std::clamp(area.width() / 4, 180, 340);
+        const QRect main_area(area.x(), area.y(), std::max(80, area.width() - side_w - 6), area.height());
+        subcamera_panel->setGeometry(main_area.right() + 6, area.y(), side_w, area.height());
 
         const double target_aspect =
             std::tan(degToRad(camera_hfov_deg) * 0.5) / std::tan(degToRad(camera_vfov_deg) * 0.5);
@@ -1306,6 +1393,182 @@ int main(int argc, char** argv) {
             scene_editor_dialog->raise();
             scene_editor_dialog->activateWindow();
         }, Qt::QueuedConnection);
+    });
+
+    enum class SonarWindowMode {
+        Docked = 0,
+        Floating,
+    };
+    SonarWindowMode sonar_window_mode = saved_sonar_docked_in_main ? SonarWindowMode::Docked : SonarWindowMode::Floating;
+    auto move_sonar_workspace_to_dock = [&]() {
+        if (!has_sonar_tabs || !sonar_workspace) {
+            return;
+        }
+        sonar_workspace->setParent(sonar_dock_panel);
+        sonar_dock_layout->addWidget(sonar_workspace, 1);
+        sonar_window_mode = SonarWindowMode::Docked;
+    };
+    auto move_sonar_workspace_to_floating = [&]() {
+        if (!has_sonar_tabs || !sonar_workspace) {
+            return;
+        }
+        sonar_workspace->setParent(&sonar_floating_window);
+        sonar_floating_layout->addWidget(sonar_workspace, 1);
+        sonar_window_mode = SonarWindowMode::Floating;
+    };
+    bool sonar_dock_visible = has_sonar_tabs;
+    auto enforce_fullscreen_for_docked_quad = [&]() {
+        if (!has_sonar_tabs || !sonar_workspace) {
+            return;
+        }
+        if (sonar_window_mode == SonarWindowMode::Docked &&
+            sonar_workspace->layoutPreset() == DockWorkspace::LayoutPreset::Quad) {
+            dashboard_window.showMaximized();
+            dashboard_window.raise();
+            dashboard_window.activateWindow();
+        }
+    };
+    auto apply_main_split_ratio = [&]() {
+        if (sonar_dock_visible) {
+            // Default main/sonar ratio = 1.5 : 2.
+            main_vertical_splitter->setSizes({1500, 2000});
+        }
+    };
+    if (has_sonar_tabs && sonar_workspace && sonar_window_mode == SonarWindowMode::Floating) {
+        move_sonar_workspace_to_floating();
+        sonar_dock_panel->setVisible(false);
+        sonar_floating_window.show();
+        sonar_floating_window.raise();
+    } else {
+        sonar_dock_panel->setVisible(sonar_dock_visible);
+    }
+    sonar_dock_button.setText(sonar_dock_visible ? "Hide Sonar" : "Show Sonar");
+    if (sonar_dock_visible) {
+        apply_main_split_ratio();
+        enforce_fullscreen_for_docked_quad();
+    }
+    sonar_dock_button.setEnabled(has_sonar_tabs);
+    sonar_dock_panel->setContextMenuPolicy(Qt::CustomContextMenu);
+    sonar_floating_window.setContextMenuPolicy(Qt::CustomContextMenu);
+    auto show_sonar_mode_menu = [&](const QPoint& global_pos) {
+        if (!has_sonar_tabs) {
+            return;
+        }
+        QMenu menu;
+        QAction* to_docked = menu.addAction(QStringLiteral("Dock Sonar In Main Window"));
+        QAction* to_floating = menu.addAction(QStringLiteral("Pop Out Sonar Window"));
+        to_docked->setEnabled(sonar_window_mode == SonarWindowMode::Floating);
+        to_floating->setEnabled(sonar_window_mode == SonarWindowMode::Docked);
+        QAction* selected = menu.exec(global_pos);
+        if (!selected) {
+            return;
+        }
+        if (selected == to_docked) {
+            sonar_floating_window.hide();
+            move_sonar_workspace_to_dock();
+            sonar_dock_visible = true;
+            sonar_dock_panel->setVisible(true);
+            sonar_dock_button.setText("Hide Sonar");
+            apply_main_split_ratio();
+            enforce_fullscreen_for_docked_quad();
+            return;
+        }
+        if (selected == to_floating) {
+            move_sonar_workspace_to_floating();
+            sonar_dock_visible = true;
+            sonar_dock_panel->setVisible(false);
+            main_vertical_splitter->setSizes({1, 0});
+            sonar_floating_window.show();
+            sonar_floating_window.raise();
+            sonar_dock_button.setText("Hide Sonar");
+            return;
+        }
+    };
+    if (has_sonar_tabs && sonar_workspace) {
+        sonar_workspace->setExtraContextMenuBuilder([&](QMenu& menu) {
+            QAction* to_docked = menu.addAction(QStringLiteral("Dock Sonar In Main Window"));
+            QAction* to_floating = menu.addAction(QStringLiteral("Pop Out Sonar Window"));
+            to_docked->setEnabled(sonar_window_mode == SonarWindowMode::Floating);
+            to_floating->setEnabled(sonar_window_mode == SonarWindowMode::Docked);
+            QObject::connect(to_docked, &QAction::triggered, &dashboard_window, [&]() {
+                sonar_floating_window.hide();
+                move_sonar_workspace_to_dock();
+                sonar_dock_visible = true;
+                sonar_dock_panel->setVisible(true);
+                sonar_dock_button.setText("Hide Sonar");
+                apply_main_split_ratio();
+                enforce_fullscreen_for_docked_quad();
+            });
+            QObject::connect(to_floating, &QAction::triggered, &dashboard_window, [&]() {
+                move_sonar_workspace_to_floating();
+                sonar_dock_visible = true;
+                sonar_dock_panel->setVisible(false);
+                main_vertical_splitter->setSizes({1, 0});
+                sonar_floating_window.show();
+                sonar_floating_window.raise();
+                sonar_dock_button.setText("Hide Sonar");
+            });
+        });
+    }
+    QObject::connect(sonar_dock_panel, &QWidget::customContextMenuRequested, [&show_sonar_mode_menu, sonar_dock_panel](const QPoint& p) {
+        show_sonar_mode_menu(sonar_dock_panel->mapToGlobal(p));
+    });
+    QObject::connect(&sonar_floating_window, &QWidget::customContextMenuRequested, [&show_sonar_mode_menu, &sonar_floating_window](const QPoint& p) {
+        show_sonar_mode_menu(sonar_floating_window.mapToGlobal(p));
+    });
+    if (has_sonar_tabs && sonar_workspace) {
+        QObject::connect(sonar_workspace, &DockWorkspace::layoutPresetChanged, &dashboard_window, [&]() {
+            enforce_fullscreen_for_docked_quad();
+        });
+    }
+    class HideOnCloseFilter final : public QObject {
+    public:
+        HideOnCloseFilter(bool* visible_flag, QPushButton* toggle_btn, QObject* parent = nullptr)
+            : QObject(parent), visible_flag_(visible_flag), toggle_btn_(toggle_btn) {}
+    protected:
+        bool eventFilter(QObject* watched, QEvent* event) override {
+            if (event->type() == QEvent::Close) {
+                if (auto* w = qobject_cast<QWidget*>(watched)) {
+                    w->hide();
+                }
+                if (visible_flag_) {
+                    *visible_flag_ = false;
+                }
+                if (toggle_btn_) {
+                    toggle_btn_->setText("Show Sonar");
+                }
+                event->ignore();
+                return true;
+            }
+            return QObject::eventFilter(watched, event);
+        }
+    private:
+        bool* visible_flag_ = nullptr;
+        QPushButton* toggle_btn_ = nullptr;
+    };
+    auto* hide_on_close_filter = new HideOnCloseFilter(&sonar_dock_visible, &sonar_dock_button, &dashboard_window);
+    sonar_floating_window.installEventFilter(hide_on_close_filter);
+    QObject::connect(&sonar_dock_button, &QPushButton::clicked, [&]() {
+        if (!has_sonar_tabs) {
+            return;
+        }
+        sonar_dock_visible = !sonar_dock_visible;
+        if (sonar_window_mode == SonarWindowMode::Docked) {
+            sonar_dock_panel->setVisible(sonar_dock_visible);
+            if (sonar_dock_visible) {
+                apply_main_split_ratio();
+            } else {
+                main_vertical_splitter->setSizes({1, 0});
+            }
+        } else {
+            if (sonar_dock_visible) {
+                sonar_floating_window.show();
+                sonar_floating_window.raise();
+            } else {
+                sonar_floating_window.hide();
+            }
+        }
+        sonar_dock_button.setText(sonar_dock_visible ? "Hide Sonar" : "Show Sonar");
     });
 
     bool restart_requested = false;
@@ -1402,6 +1665,24 @@ int main(int argc, char** argv) {
             if (primary_sss_module_idx >= 0 && primary_sss_module_idx < static_cast<int>(app_cfg.sonar_modules.size())) {
                 app_cfg.sonar_modules[primary_sss_module_idx].sss_config = primary_sss_cfg;
             }
+            app_cfg.sonar_window_docked_in_main = (sonar_window_mode == SonarWindowMode::Docked);
+            if (sonar_workspace) {
+                switch (sonar_workspace->layoutPreset()) {
+                case DockWorkspace::LayoutPreset::Horizontal:
+                    app_cfg.sonar_workspace_split_layout = "horizontal";
+                    break;
+                case DockWorkspace::LayoutPreset::Vertical:
+                    app_cfg.sonar_workspace_split_layout = "vertical";
+                    break;
+                case DockWorkspace::LayoutPreset::Quad:
+                    app_cfg.sonar_workspace_split_layout = "quad";
+                    break;
+                case DockWorkspace::LayoutPreset::Single:
+                default:
+                    app_cfg.sonar_workspace_split_layout = "single";
+                    break;
+                }
+            }
             for (const auto& extra_sss : extra_sss_modules_rt) {
                 if (!extra_sss) {
                     continue;
@@ -1454,7 +1735,9 @@ int main(int argc, char** argv) {
         settings_dialog.accept();
         viewer.setDone(true);
     });
-    dashboard_window.show();
+    dashboard_window.showMaximized();
+    apply_main_split_ratio();
+    QTimer::singleShot(0, &dashboard_window, [apply_main_split_ratio]() { apply_main_split_ratio(); });
     update_viewport_layout();
     auto compute_sonar_target_fps = [&]() {
         if (!sonar) {
@@ -1720,7 +2003,9 @@ int main(int argc, char** argv) {
             snapshot.sonar_actual_fps = sonar_actual_fps;
             snapshot.sonar_target_fps = sonar_target_fps;
             snapshot.sonar_max_fps = sonar_max_fps;
-            info_panel.updateSnapshot(snapshot);
+            if (info_panel) {
+                info_panel->updateSnapshot(snapshot);
+            }
             update_viewport_layout();
             QApplication::processEvents(QEventLoop::AllEvents, 2);
             if (enable_opencv_window) {
@@ -1968,7 +2253,9 @@ int main(int argc, char** argv) {
         snapshot.sonar_actual_fps = sonar_actual_fps;
         snapshot.sonar_target_fps = sonar_target_fps;
         snapshot.sonar_max_fps = sonar_max_fps;
-        info_panel.updateSnapshot(snapshot);
+        if (info_panel) {
+            info_panel->updateSnapshot(snapshot);
+        }
         update_viewport_layout();
         QApplication::processEvents(QEventLoop::AllEvents, 2);
         if (enable_opencv_window) {

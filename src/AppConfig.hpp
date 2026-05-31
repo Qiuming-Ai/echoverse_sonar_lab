@@ -172,6 +172,10 @@ struct AppConfigData {
     SideScanSonarConfigUi side_scan_sonar;
     SubCameraConfig mbes_camera;
     PointCloudSonarConfigUi point_cloud_sonar;
+
+    // UI layout persistence.
+    bool sonar_window_docked_in_main = true;
+    QString sonar_workspace_split_layout = "single"; // single/horizontal/vertical/quad
 };
 
 class AppConfigStore {

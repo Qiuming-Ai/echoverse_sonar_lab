@@ -12,9 +12,12 @@
 #include <sonar_types_v2/echoverse_math_types.hpp>
 #include <sonar_palette/PaletteRamp.hpp>
 
-#define BASE_WIDTH      1300
-#define BASE_HEIGHT      600
+#define BASE_WIDTH      1600
+#define BASE_HEIGHT      900
 #define BINS_REF_SIZE    500
+
+inline constexpr double kSonarRenderRefWidth = static_cast<double>(BASE_WIDTH);
+inline constexpr double kSonarRenderRefHeight = static_cast<double>(BASE_HEIGHT);
 
 using namespace sonar_palette;
 

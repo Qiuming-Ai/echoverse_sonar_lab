@@ -3,6 +3,7 @@
 #include "SonarCanvas.hpp"
 
 #include <QtGlobal>
+#include <algorithm>
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #define ROCK_PALETTE_TEXT_ROLE QPalette::WindowText
@@ -14,6 +15,9 @@
 
 SideScanControlPanel::SideScanControlPanel(QWidget* parent) : QWidget(parent)
 {
+    // Keep panel shrinkable without dominating splitter size allocation.
+    setMinimumSize(120, 80);
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     plot = new SideScanWaterfallCanvas(this);
     plot->setGeometry(10, 10, BASE_WIDTH, BASE_HEIGHT);
     connect(this, SIGNAL(rangeChanged(int)), plot, SLOT(rangeChanged(int)));
@@ -34,45 +38,48 @@ SideScanControlPanel::SideScanControlPanel(QWidget* parent) : QWidget(parent)
     createPaletteComponent();
     createGridComponent();
 
-    resize(1020, 670);
 }
 
 SideScanControlPanel::~SideScanControlPanel() = default;
 
 void SideScanControlPanel::resizeEvent(QResizeEvent* event)
 {
+    const int gain_row_y = std::max(8, height() - 70);
+    const int range_row_y = std::max(8, height() - 40);
+    const int right_col_x = std::max(10, width() - 160);
+    const int right_input_x = std::max(70, width() - 100);
     if (plot) {
-        plot->setGeometry(10, 10, width() - 20, height() - 70);
+        plot->setGeometry(10, 10, std::max(80, width() - 20), std::max(80, height() - 70));
     }
     if (lbGain) {
-        lbGain->setGeometry(10, height() - 70, 50, 20);
+        lbGain->setGeometry(10, gain_row_y, 50, 20);
     }
     if (slGain) {
-        slGain->setGeometry(70, height() - 70, 150, 20);
+        slGain->setGeometry(70, gain_row_y, 150, 20);
     }
     if (edGain) {
-        edGain->setGeometry(230, height() - 70, 50, 20);
+        edGain->setGeometry(230, gain_row_y, 50, 20);
     }
     if (lbRange) {
-        lbRange->setGeometry(10, height() - 40, 50, 20);
+        lbRange->setGeometry(10, range_row_y, 50, 20);
     }
     if (slRange) {
-        slRange->setGeometry(70, height() - 40, 150, 20);
+        slRange->setGeometry(70, range_row_y, 150, 20);
     }
     if (edRange) {
-        edRange->setGeometry(230, height() - 40, 50, 20);
+        edRange->setGeometry(230, range_row_y, 50, 20);
     }
     if (lbPalette) {
-        lbPalette->setGeometry(width() - 160, height() - 40, 50, 20);
+        lbPalette->setGeometry(right_col_x, range_row_y, 50, 20);
     }
     if (comboPalette) {
-        comboPalette->setGeometry(width() - 100, height() - 40, 80, 20);
+        comboPalette->setGeometry(right_input_x, range_row_y, 80, 20);
     }
     if (lbGrid) {
-        lbGrid->setGeometry(width() - 160, height() - 70, 50, 20);
+        lbGrid->setGeometry(right_col_x, gain_row_y, 50, 20);
     }
     if (boxGrid) {
-        boxGrid->setGeometry(width() - 100, height() - 70, 80, 20);
+        boxGrid->setGeometry(right_input_x, gain_row_y, 80, 20);
     }
     QWidget::resizeEvent(event);
 }

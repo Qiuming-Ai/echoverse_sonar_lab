@@ -3,6 +3,7 @@
 #include "RockSonarPlotView.hpp"
 #include "PointCloudViewerWindow.hpp"
 #include "SonarControlPanel.hpp"
+#include "ui/DockWorkspace.hpp"
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -15,7 +16,6 @@
 #include <QProgressDialog>
 #include <QProcess>
 #include <QRegularExpression>
-#include <QTabWidget>
 
 #include <sonar_types_v2/echoverse_math_types.hpp>
 #include <sonar_core/AcousticRaySimulator.hpp>
@@ -208,22 +208,31 @@ bool MbesModule::initSimulation(osg::ref_ptr<osg::Group> root, float resolution_
     return true;
 }
 
-void MbesModule::setupWidget(QTabWidget* tabs, const QString& title) {
-    if (!sonar || !tabs) {
+void MbesModule::setupWidget(DockWorkspace* workspace, const QString& title) {
+    if (!sonar || !workspace) {
         if (rock_sonar_ui) {
             rock_sonar_ui->deleteLater();
             rock_sonar_ui = nullptr;
         }
         return;
     }
-    rock_sonar_ui = new SonarControlPanel(tabs);
-    tabs->addTab(rock_sonar_ui, title);
-    rock_sonar_ui->setMinimumSize(640, 420);
+    rock_sonar_ui = new SonarControlPanel(workspace);
+    workspace->addTab(rock_sonar_ui, title);
+    rock_sonar_ui->setMinimumSize(320, 220);
     rock_sonar_ui->setMinRange(1);
     rock_sonar_ui->setMaxRange(150);
+    rock_sonar_ui->setAdvancedPanelEnabled(true);
     rock_sonar_ui->setRange(static_cast<int>(std::lround(static_cast<double>(runtime_range_m))));
     const int gain_pct = static_cast<int>(std::lround(static_cast<double>(runtime_gain) * 100.0));
     rock_sonar_ui->setGain(std::clamp(gain_pct, 0, 100));
+    rock_sonar_ui->setAdvancedSonarConfig(
+        module_cfg.mbes_config.range_m,
+        module_cfg.mbes_config.gain,
+        module_cfg.mbes_config.center_frequency_khz,
+        module_cfg.mbes_config.bandwidth_khz,
+        module_cfg.mbes_config.beam_width_deg,
+        module_cfg.mbes_config.beam_height_deg,
+        module_cfg.mbes_config.angular_resolution_deg);
     rock_sonar_ui->setSonarPalette(1);
 }
 
@@ -231,20 +240,50 @@ void MbesModule::connectWidgetSignals() {
     if (!rock_sonar_ui) {
         return;
     }
-    QObject::connect(rock_sonar_ui, &SonarControlPanel::rangeChanged, [this](int meters) {
-        runtime_range_m = std::clamp(static_cast<float>(meters), 1.0f, 500.0f);
-        module_cfg.mbes_config.range_m = static_cast<double>(runtime_range_m);
-        if (sonar) {
-            sonar->setRange(runtime_range_m);
-        }
-    });
-    QObject::connect(rock_sonar_ui, &SonarControlPanel::gainChanged, [this](int g_pct) {
-        runtime_gain = std::clamp(static_cast<float>(g_pct) / 100.0f, 0.0f, 1.0f);
-        module_cfg.mbes_config.gain = static_cast<double>(runtime_gain);
-        if (sonar) {
-            sonar->setGain(runtime_gain);
-        }
-    });
+    QObject::connect(
+        rock_sonar_ui,
+        &SonarControlPanel::advancedSonarConfigChanged,
+        [this](double range_m,
+               double gain,
+               double center_frequency_khz,
+               double bandwidth_khz,
+               double beam_width_deg,
+               double beam_height_deg,
+               double angle_resolution_deg) {
+            const double safe_range_m = std::clamp(range_m, 0.1, 500.0);
+            const double safe_gain = std::clamp(gain, 0.0, 1.0);
+            const double safe_center_frequency_khz = std::clamp(center_frequency_khz, 1.0, 2000.0);
+            const double safe_bandwidth_khz =
+                std::clamp(bandwidth_khz, 0.1, std::max(0.1, safe_center_frequency_khz - 0.1));
+            const double safe_beam_width_deg =
+                std::clamp(beam_width_deg, standalone_mvp::kMinSonarBeamDeg, standalone_mvp::kMaxSonarBeamDeg);
+            const double safe_beam_height_deg =
+                std::clamp(beam_height_deg, standalone_mvp::kMinSonarBeamDeg, standalone_mvp::kMaxSonarBeamDeg);
+            const double safe_angle_resolution_deg = std::clamp(angle_resolution_deg, 0.01, 30.0);
+
+            runtime_range_m = static_cast<float>(safe_range_m);
+            runtime_gain = static_cast<float>(safe_gain);
+            module_cfg.mbes_config.range_m = safe_range_m;
+            module_cfg.mbes_config.gain = safe_gain;
+            module_cfg.mbes_config.center_frequency_khz = safe_center_frequency_khz;
+            module_cfg.mbes_config.bandwidth_khz = safe_bandwidth_khz;
+            module_cfg.mbes_config.beam_width_deg = safe_beam_width_deg;
+            module_cfg.mbes_config.beam_height_deg = safe_beam_height_deg;
+            module_cfg.mbes_config.angular_resolution_deg = safe_angle_resolution_deg;
+            module_cfg.mbes_config.bin_count = static_cast<int>(computeDerivedBinCount(module_cfg.mbes_config));
+            module_cfg.mbes_config.beam_count = static_cast<int>(computeDerivedBeamCount(module_cfg.mbes_config));
+
+            if (sonar) {
+                sonar->setRange(runtime_range_m);
+                sonar->setGain(runtime_gain);
+                sonar->setSonarBinCount(static_cast<unsigned int>(module_cfg.mbes_config.bin_count));
+                sonar->setSonarBeamCount(static_cast<unsigned int>(module_cfg.mbes_config.beam_count));
+                sonar->setSonarBeamWidth(
+                    sonar_types_v2::Angle::fromDeg(static_cast<float>(module_cfg.mbes_config.beam_width_deg)));
+                sonar->setSonarBeamHeight(
+                    sonar_types_v2::Angle::fromDeg(static_cast<float>(module_cfg.mbes_config.beam_height_deg)));
+            }
+        });
 }
 
 bool MbesModule::tick(const Eigen::Affine3d& pose,
@@ -281,7 +320,7 @@ bool MbesModule::initPointCloudRuntime(
     int x,
     int y,
     const QString& project_dir,
-    QTabWidget* tabs) {
+    DockWorkspace* workspace) {
     point_cloud_project_dir_ = project_dir;
     const QString sonar_json_rel = module_cfg.sonar_param_json_name.trimmed();
     point_cloud_sonar_json_path_ = sonar_json_rel.isEmpty()
@@ -325,8 +364,8 @@ bool MbesModule::initPointCloudRuntime(
     bottom_cloud_window->setWindowTitle(QString("%1 Point Cloud").arg(module_cfg.name));
     bottom_cloud_window->setInitialViewFromPose(initial_pose);
     bottom_cloud_window->setConfig(bottom_cfg_runtime);
-    if (tabs) {
-        tabs->addTab(bottom_cloud_window, QString("%1 Point Cloud").arg(module_cfg.name));
+    if (workspace) {
+        workspace->addTab(bottom_cloud_window, QString("%1 Point Cloud").arg(module_cfg.name));
     } else {
         bottom_cloud_window->move(x, y);
         bottom_cloud_window->show();

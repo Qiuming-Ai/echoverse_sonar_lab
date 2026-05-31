@@ -3,14 +3,24 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <vector>
 
 using namespace sonar_palette;
 
 namespace {
 constexpr int kPaletteSize = 256;
-constexpr int kBottomMargin = 30;
-constexpr int kOverlayPaddingX = 30;
 const QColor kSonarBackgroundColor(80, 80, 80);
+constexpr double kFanMarginXPx = 15.0;
+
+bool angleInClosedRange(double angle, double min_a, double max_a) {
+    return angle >= min_a && angle <= max_a;
+}
+
+void appendIfInRange(std::vector<double>& angles, double candidate, double min_a, double max_a) {
+    if (angleInClosedRange(candidate, min_a, max_a)) {
+        angles.push_back(candidate);
+    }
+}
 }
 
 SonarCanvas::SonarCanvas(QWidget *parent)
@@ -195,12 +205,12 @@ void SonarCanvas::paintEvent(QPaintEvent *) {
 
 void SonarCanvas::updateOrigin() {
     origin.setX(width() / 2);
-    origin.setY(isMultibeamSonar ? (height() - kBottomMargin) : (height() / 2));
+    origin.setY(height() / 2);
 }
 
 void SonarCanvas::resizeEvent(QResizeEvent *event) {
-    scaleX = (width() > 400) ? static_cast<double>(width()) / (BASE_WIDTH - 134) : 0.2;
-    scaleY = (height() > 200) ? static_cast<double>(height() - 100) / (BASE_HEIGHT - 100) : 0.2;
+    scaleX = (width() > 40) ? static_cast<double>(width()) / kSonarRenderRefWidth : 0.2;
+    scaleY = (height() > 40) ? static_cast<double>(height()) / kSonarRenderRefHeight : 0.2;
     updateOrigin();
     changedSize = true;
     QWidget::resizeEvent(event);
@@ -209,11 +219,6 @@ void SonarCanvas::resizeEvent(QResizeEvent *event) {
 void SonarCanvas::drawOverlay() {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
-
-    for (int i = 0; i < kPaletteSize; ++i) {
-        painter.setPen(QPen(colorMap[static_cast<size_t>(i)]));
-        painter.drawRect(width() - kOverlayPaddingX, height() - 10 - i * 2, 20, 2);
-    }
 
     if (!enabledGrid || !lastSonar.bin_count || lastSonar.bearings.empty()) {
         return;
@@ -234,7 +239,7 @@ void SonarCanvas::drawOverlay() {
 
             const QString rangeText = QString::number(i * range * 1.0 / 5);
             const int tx = origin.x() + static_cast<int>(i * 100 * scaleX * std::sin(sectorSize.rad / 2));
-            const int ty = height() - static_cast<int>(i * 100 * scaleY * std::cos(sectorSize.rad / 2));
+            const int ty = origin.y() - static_cast<int>(i * 100 * scaleY * std::cos(sectorSize.rad / 2));
             painter.drawText(tx, ty - 5, rangeText);
 
             const size_t bearingIdx = static_cast<size_t>(((lastSonar.beam_count - 1) * 1.0 / 4) * (i - 1));
@@ -341,17 +346,57 @@ void SonarCanvas::generateMultibeamTransferTable(const sonar_types_v2::samples::
     if (!(interval > 0.0) || !std::isfinite(interval)) {
         return;
     }
-
     const double sector_min = sonar.bearings[0].rad;
     const double sector_max = sector_min + sonar.beam_width.rad;
+    const double rmax = static_cast<double>(sonar.bin_count);
+
+    std::vector<double> candidate_angles;
+    candidate_angles.reserve(6);
+    candidate_angles.push_back(sector_min);
+    candidate_angles.push_back(sector_max);
+    appendIfInRange(candidate_angles, -M_PI, sector_min, sector_max);
+    appendIfInRange(candidate_angles, -M_PI_2, sector_min, sector_max);
+    appendIfInRange(candidate_angles, 0.0, sector_min, sector_max);
+    appendIfInRange(candidate_angles, M_PI_2, sector_min, sector_max);
+    appendIfInRange(candidate_angles, M_PI, sector_min, sector_max);
+
+    double min_x = 0.0;
+    double max_x = 0.0;
+    double min_y = 0.0;
+    double max_y = 0.0;
+    for (double a : candidate_angles) {
+        const double x = rmax * std::sin(a);
+        const double y = -rmax * std::cos(a);
+        min_x = std::min(min_x, x);
+        max_x = std::max(max_x, x);
+        min_y = std::min(min_y, y);
+        max_y = std::max(max_y, y);
+    }
+    const double data_w = std::max(1e-6, max_x - min_x);
+    const double data_h = std::max(1e-6, max_y - min_y);
+    const double avail_w = std::max(2.0, static_cast<double>(width()) - 2.0 * kFanMarginXPx);
+    const double fit_scale_x = avail_w / data_w;
+    const double fit_scale_y = (std::max(2, height()) - 2.0) / data_h;
+    const double pixels_per_bin = std::max(1e-6, std::min(fit_scale_x, fit_scale_y));
+    if (!std::isfinite(pixels_per_bin)) {
+        return;
+    }
+    const double center_x = 0.5 * (min_x + max_x);
+    const double center_y = 0.5 * (min_y + max_y);
+    origin.setX(static_cast<int>(std::lround(0.5 * static_cast<double>(width()) - center_x * pixels_per_bin)));
+    origin.setY(static_cast<int>(std::lround(0.5 * static_cast<double>(height()) - center_y * pixels_per_bin)));
+    // Keep overlay arcs/rays consistent with transfer mapping.
+    scaleX = pixels_per_bin * rmax / static_cast<double>(BINS_REF_SIZE);
+    scaleY = scaleX;
+
     const int bin_count_i = static_cast<int>(sonar.bin_count);
     transfer.reserve(static_cast<size_t>(width() * height()));
 
     for (int j = 0; j < height(); ++j) {
         for (int i = 0; i < width(); ++i) {
             QPointF point(i - origin.x(), j - origin.y());
-            point.rx() /= scaleX * BINS_REF_SIZE / sonar.bin_count;
-            point.ry() /= scaleY * BINS_REF_SIZE / sonar.bin_count;
+            point.rx() /= pixels_per_bin;
+            point.ry() /= pixels_per_bin;
 
             const double radius = std::sqrt(point.x() * point.x() + point.y() * point.y());
             const double angle = std::atan2(point.x(), -point.y());
@@ -359,7 +404,7 @@ void SonarCanvas::generateMultibeamTransferTable(const sonar_types_v2::samples::
             if (!std::isfinite(radius) || !std::isfinite(angle) ||
                 angle < sector_min || angle > sector_max ||
                 radius > static_cast<double>(sonar.bin_count) ||
-                radius <= 0.0 || j > origin.y()) {
+                radius <= 0.0) {
                 transfer.push_back(-1);
                 continue;
             }

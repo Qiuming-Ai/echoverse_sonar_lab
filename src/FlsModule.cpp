@@ -3,6 +3,7 @@
 #include "PointCloudViewerWindow.hpp"
 #include "RockSonarPlotView.hpp"
 #include "SonarControlPanel.hpp"
+#include "ui/DockWorkspace.hpp"
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -15,8 +16,6 @@
 #include <QProgressDialog>
 #include <QProcess>
 #include <QRegularExpression>
-#include <QTabWidget>
-
 #include <sonar_core/AcousticRaySimulator.hpp>
 
 #include <sonar_types_v2/echoverse_math_types.hpp>
@@ -215,22 +214,31 @@ bool FlsModule::initSimulation(osg::ref_ptr<osg::Group> root, float resolution_c
     return true;
 }
 
-void FlsModule::setupWidget(QTabWidget* tabs, const QString& title) {
-    if (!sonar || !tabs) {
+void FlsModule::setupWidget(DockWorkspace* workspace, const QString& title) {
+    if (!sonar || !workspace) {
         if (rock_sonar_ui) {
             rock_sonar_ui->deleteLater();
             rock_sonar_ui = nullptr;
         }
         return;
     }
-    rock_sonar_ui = new SonarControlPanel(tabs);
-    tabs->addTab(rock_sonar_ui, title);
-    rock_sonar_ui->setMinimumSize(640, 420);
+    rock_sonar_ui = new SonarControlPanel(workspace);
+    workspace->addTab(rock_sonar_ui, title);
+    rock_sonar_ui->setMinimumSize(320, 220);
     rock_sonar_ui->setMinRange(1);
     rock_sonar_ui->setMaxRange(150);
+    rock_sonar_ui->setAdvancedPanelEnabled(true);
     rock_sonar_ui->setRange(static_cast<int>(std::lround(static_cast<double>(runtime_range_m))));
     const int gain_pct = static_cast<int>(std::lround(static_cast<double>(runtime_gain) * 100.0));
     rock_sonar_ui->setGain(std::clamp(gain_pct, 0, 100));
+    rock_sonar_ui->setAdvancedSonarConfig(
+        module_cfg.fls_config.range_m,
+        module_cfg.fls_config.gain,
+        module_cfg.fls_config.center_frequency_khz,
+        module_cfg.fls_config.bandwidth_khz,
+        module_cfg.fls_config.beam_width_deg,
+        module_cfg.fls_config.beam_height_deg,
+        module_cfg.fls_config.angular_resolution_deg);
     rock_sonar_ui->setSonarPalette(1);
 }
 
@@ -238,20 +246,60 @@ void FlsModule::connectWidgetSignals() {
     if (!rock_sonar_ui) {
         return;
     }
-    QObject::connect(rock_sonar_ui, &SonarControlPanel::rangeChanged, [this](int meters) {
-        runtime_range_m = std::clamp(static_cast<float>(meters), 1.0f, 500.0f);
-        module_cfg.fls_config.range_m = static_cast<double>(runtime_range_m);
-        if (sonar) {
-            sonar->setRange(runtime_range_m);
-        }
-    });
-    QObject::connect(rock_sonar_ui, &SonarControlPanel::gainChanged, [this](int g_pct) {
-        runtime_gain = std::clamp(static_cast<float>(g_pct) / 100.0f, 0.0f, 1.0f);
-        module_cfg.fls_config.gain = static_cast<double>(runtime_gain);
-        if (sonar) {
-            sonar->setGain(runtime_gain);
-        }
-    });
+    QObject::connect(
+        rock_sonar_ui,
+        &SonarControlPanel::advancedSonarConfigChanged,
+        [this](double range_m,
+               double gain,
+               double center_frequency_khz,
+               double bandwidth_khz,
+               double beam_width_deg,
+               double beam_height_deg,
+               double angle_resolution_deg) {
+            const double safe_range_m = std::clamp(range_m, 0.1, 500.0);
+            const double safe_gain = std::clamp(gain, 0.0, 1.0);
+            const double safe_center_frequency_khz = std::clamp(center_frequency_khz, 1.0, 2000.0);
+            const double safe_bandwidth_khz =
+                std::clamp(bandwidth_khz, 0.1, std::max(0.1, safe_center_frequency_khz - 0.1));
+            const double safe_beam_width_deg =
+                std::clamp(beam_width_deg, standalone_mvp::kMinSonarBeamDeg, standalone_mvp::kMaxSonarBeamDeg);
+            const double safe_beam_height_deg =
+                std::clamp(beam_height_deg, standalone_mvp::kMinSonarBeamDeg, standalone_mvp::kMaxSonarBeamDeg);
+            const double safe_angle_resolution_deg = std::clamp(angle_resolution_deg, 0.01, 30.0);
+
+            runtime_range_m = static_cast<float>(safe_range_m);
+            runtime_gain = static_cast<float>(safe_gain);
+            module_cfg.fls_config.range_m = safe_range_m;
+            module_cfg.fls_config.gain = safe_gain;
+            module_cfg.fls_config.center_frequency_khz = safe_center_frequency_khz;
+            module_cfg.fls_config.bandwidth_khz = safe_bandwidth_khz;
+            module_cfg.fls_config.beam_width_deg = safe_beam_width_deg;
+            module_cfg.fls_config.beam_height_deg = safe_beam_height_deg;
+            module_cfg.fls_config.angular_resolution_deg = safe_angle_resolution_deg;
+            module_cfg.fls_config.bin_count = static_cast<int>(computeDerivedBinCount(module_cfg.fls_config));
+            module_cfg.fls_config.beam_count = static_cast<int>(computeDerivedBeamCount(module_cfg.fls_config));
+
+            if (sonar) {
+                sonar->setRange(runtime_range_m);
+                sonar->setGain(runtime_gain);
+                sonar->setSonarBinCount(static_cast<unsigned int>(module_cfg.fls_config.bin_count));
+                sonar->setSonarBeamCount(static_cast<unsigned int>(module_cfg.fls_config.beam_count));
+                sonar->setSonarBeamWidth(
+                    sonar_types_v2::Angle::fromDeg(static_cast<float>(module_cfg.fls_config.beam_width_deg)));
+                sonar->setSonarBeamHeight(
+                    sonar_types_v2::Angle::fromDeg(static_cast<float>(module_cfg.fls_config.beam_height_deg)));
+            }
+            // Keep PointCloud range synced with FLS range changes.
+            const double synced_pc_range = std::clamp(safe_range_m, 0.1, 100.0);
+            module_cfg.point_cloud_config.range_m = synced_pc_range;
+            point_cloud_cfg_runtime.range_m = synced_pc_range;
+            if (point_cloud_sim) {
+                point_cloud_sim->setConfig(point_cloud_cfg_runtime);
+            }
+            if (point_cloud_window) {
+                point_cloud_window->setRangeMeters(synced_pc_range);
+            }
+        });
 }
 
 bool FlsModule::tick(const Eigen::Affine3d& pose,
@@ -288,14 +336,15 @@ bool FlsModule::initPointCloudRuntime(
     int x,
     int y,
     const QString& project_dir,
-    QTabWidget* tabs) {
+    DockWorkspace* workspace) {
     point_cloud_project_dir_ = project_dir;
     const QString sonar_json_rel = module_cfg.sonar_param_json_name.trimmed();
     point_cloud_sonar_json_path_ = sonar_json_rel.isEmpty()
                                        ? QString()
                                        : QDir(project_dir).filePath(QDir::fromNativeSeparators(sonar_json_rel));
     point_cloud_cfg_runtime.enabled = pointCloudEnabledByBinding();
-    point_cloud_cfg_runtime.range_m = module_cfg.point_cloud_config.range_m;
+    // Keep startup point-cloud range aligned with current FLS runtime range.
+    point_cloud_cfg_runtime.range_m = std::clamp(static_cast<double>(runtime_range_m), 0.1, 100.0);
     point_cloud_cfg_runtime.frequency_khz = module_cfg.point_cloud_config.frequency_khz;
     point_cloud_cfg_runtime.bandwidth_khz = module_cfg.point_cloud_config.bandwidth_khz;
     point_cloud_cfg_runtime.horizontal_angle_resolution_deg = module_cfg.point_cloud_config.horizontal_angle_resolution_deg;
@@ -334,8 +383,8 @@ bool FlsModule::initPointCloudRuntime(
     point_cloud_window->setWindowTitle(QString("%1 Point Cloud").arg(module_cfg.name));
     point_cloud_window->setInitialViewFromPose(initial_pose);
     point_cloud_window->setConfig(point_cloud_cfg_runtime);
-    if (tabs) {
-        tabs->addTab(point_cloud_window, QString("%1 Point Cloud").arg(module_cfg.name));
+    if (workspace) {
+        workspace->addTab(point_cloud_window, QString("%1 Point Cloud").arg(module_cfg.name));
     } else {
         point_cloud_window->move(x, y);
         point_cloud_window->show();
@@ -363,7 +412,8 @@ void FlsModule::consumePointCloudUiConfig() {
     }
     const bool was_file_output_enabled = point_cloud_cfg_runtime.file_output_enabled;
     point_cloud_cfg_runtime.enabled = true;
-    point_cloud_cfg_runtime.range_m = cfg_from_ui.range_m;
+    const double synced_range = std::clamp(cfg_from_ui.range_m, 0.1, 100.0);
+    point_cloud_cfg_runtime.range_m = synced_range;
     point_cloud_cfg_runtime.frequency_khz = cfg_from_ui.frequency_khz;
     point_cloud_cfg_runtime.bandwidth_khz = cfg_from_ui.bandwidth_khz;
     point_cloud_cfg_runtime.horizontal_angle_resolution_deg = cfg_from_ui.horizontal_angle_resolution_deg;
@@ -376,6 +426,16 @@ void FlsModule::consumePointCloudUiConfig() {
     point_cloud_cfg_runtime.file_output_enabled = cfg_from_ui.file_output_enabled;
     point_cloud_cfg_runtime.tcp_host = cfg_from_ui.tcp_host;
     point_cloud_cfg_runtime.tcp_port = cfg_from_ui.tcp_port;
+    // PointCloud -> FLS range sync (bidirectional).
+    runtime_range_m = static_cast<float>(synced_range);
+    module_cfg.fls_config.range_m = synced_range;
+    module_cfg.point_cloud_config.range_m = synced_range;
+    if (sonar) {
+        sonar->setRange(runtime_range_m);
+    }
+    if (rock_sonar_ui) {
+        rock_sonar_ui->setRange(static_cast<int>(std::lround(synced_range)));
+    }
     point_cloud_sim->setConfig(point_cloud_cfg_runtime);
     point_cloud_tcp_streamer.applyConfig(
         point_cloud_cfg_runtime.tcp_output_enabled,

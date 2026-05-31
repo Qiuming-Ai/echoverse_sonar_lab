@@ -18,6 +18,7 @@ class AcousticRaySimulator;
 
 class SonarControlPanel;
 class QTabWidget;
+class DockWorkspace;
 namespace osg {
 class Group;
 template <class T>
@@ -46,11 +47,11 @@ public:
         int x,
         int y,
         const QString& project_dir,
-        QTabWidget* tabs = nullptr);
+        DockWorkspace* workspace = nullptr);
     void consumePointCloudUiConfig();
     void setPointCloudRenderBlocked(bool blocked);
     void tickPointCloud(const Eigen::Affine3d& pose, bool emit_single_frame_tcp);
-    void setupWidget(QTabWidget* tabs, const QString& title);
+    void setupWidget(DockWorkspace* workspace, const QString& title);
     void connectWidgetSignals();
     bool tick(const Eigen::Affine3d& pose,
               int frame_index,
