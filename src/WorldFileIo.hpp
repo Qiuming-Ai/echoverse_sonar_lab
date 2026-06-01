@@ -13,7 +13,8 @@ struct WorldIncludeEntry {
 };
 
 /// Subdirectories of `uwmodels/sdf` that contain `model.sdf`.
-QStringList discoverSdfModelNames();
+/// Search roots: `<project_root>/uwmodels/sdf` and `<app_dir>/uwmodels/sdf`.
+QStringList discoverSdfModelNames(const QString& project_root = QString());
 
 bool loadWorldIncludes(const QString& world_file_path, QVector<WorldIncludeEntry>* out, QString* error = nullptr);
 

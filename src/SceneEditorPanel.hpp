@@ -2,7 +2,6 @@
 
 #include "WorldFileIo.hpp"
 
-#include <QCheckBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QTableWidget>
@@ -26,14 +25,19 @@ public:
     void setWorldFile(const QString& absolute_world_path, const QString& world_spec_for_osg);
     void setWorldModelsGroup(osg::Group* world_models, float range_m);
     void setPauseSonarCallback(std::function<void(bool)> fn);
+    void setProjectRoot(const QString& project_root);
 
 private slots:
     void onAddModel();
     void onEditPose();
     void onDeleteModel();
-    void onReloadPreview();
+    void onImportModels();
 
 private:
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+    void setEditMode(bool on);
+    void applyEnabledState();
     void refreshTable();
     void reloadSceneGraph();
     bool saveEntriesToDisk(QString* err = nullptr);
@@ -41,11 +45,12 @@ private:
     QVector<WorldIncludeEntry> entries_;
     QString world_path_;
     QString world_spec_osg_;
+    QString project_root_;
     osg::Group* world_models_ = nullptr;
     float range_m_ = 40.f;
     std::function<void(bool)> pause_sonar_;
+    bool edit_mode_active_ = false;
 
-    QCheckBox* enable_edit_ = nullptr;
     QLabel* hint_ = nullptr;
     QTableWidget* table_ = nullptr;
     QPushButton* add_btn_ = nullptr;

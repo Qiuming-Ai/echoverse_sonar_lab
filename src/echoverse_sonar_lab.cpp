@@ -26,6 +26,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPixmap>
 #include <QProcess>
 #include <QPushButton>
@@ -1198,6 +1199,32 @@ int main(int argc, char** argv) {
     };
     if (has_sonar_tabs && sonar_workspace) {
         sonar_workspace->applyLayoutPreset(preset_from_saved_layout(saved_sonar_split_layout));
+        if (saved_sonar_split_layout == "horizontal" &&
+            (!app_cfg.sonar_workspace_horizontal_left_tabs.isEmpty() ||
+             !app_cfg.sonar_workspace_horizontal_right_tabs.isEmpty())) {
+            sonar_workspace->restoreHorizontalPaneTabTitles(
+                app_cfg.sonar_workspace_horizontal_left_tabs,
+                app_cfg.sonar_workspace_horizontal_right_tabs);
+        } else if (saved_sonar_split_layout == "vertical" &&
+                   (!app_cfg.sonar_workspace_vertical_top_tabs.isEmpty() ||
+                    !app_cfg.sonar_workspace_vertical_bottom_tabs.isEmpty())) {
+            sonar_workspace->restoreVerticalPaneTabTitles(
+                app_cfg.sonar_workspace_vertical_top_tabs,
+                app_cfg.sonar_workspace_vertical_bottom_tabs);
+        } else if (saved_sonar_split_layout == "quad" &&
+                   (!app_cfg.sonar_workspace_quad_top_left_tabs.isEmpty() ||
+                    !app_cfg.sonar_workspace_quad_top_right_tabs.isEmpty() ||
+                    !app_cfg.sonar_workspace_quad_bottom_left_tabs.isEmpty() ||
+                    !app_cfg.sonar_workspace_quad_bottom_right_tabs.isEmpty())) {
+            sonar_workspace->restoreQuadPaneTabTitles(
+                app_cfg.sonar_workspace_quad_top_left_tabs,
+                app_cfg.sonar_workspace_quad_top_right_tabs,
+                app_cfg.sonar_workspace_quad_bottom_left_tabs,
+                app_cfg.sonar_workspace_quad_bottom_right_tabs);
+        } else if (saved_sonar_split_layout == "single" &&
+                   !app_cfg.sonar_workspace_single_tabs.isEmpty()) {
+            sonar_workspace->restoreSinglePaneTabTitles(app_cfg.sonar_workspace_single_tabs);
+        }
     }
 
     auto* content_container = new QWidget(&dashboard_window);
@@ -1247,6 +1274,7 @@ int main(int argc, char** argv) {
         const QString wf =
             QFileInfo(world_for_scene).isFile() ? QFileInfo(world_for_scene).absoluteFilePath() : QString();
         scene_editor->setWorldFile(wf, world_for_scene);
+        scene_editor->setProjectRoot(QFileInfo(config_store.path()).absolutePath());
         scene_editor->setWorldModelsGroup(standalone_mvp::findWorldModelsGroup(root.get()), range_m);
         scene_editor->setPauseSonarCallback([&](bool on) { scene_edit_pauses_sonar.store(on); });
     }
@@ -1666,20 +1694,45 @@ int main(int argc, char** argv) {
                 app_cfg.sonar_modules[primary_sss_module_idx].sss_config = primary_sss_cfg;
             }
             app_cfg.sonar_window_docked_in_main = (sonar_window_mode == SonarWindowMode::Docked);
+            app_cfg.sonar_workspace_single_tabs.clear();
+            app_cfg.sonar_workspace_horizontal_left_tabs.clear();
+            app_cfg.sonar_workspace_horizontal_right_tabs.clear();
+            app_cfg.sonar_workspace_vertical_top_tabs.clear();
+            app_cfg.sonar_workspace_vertical_bottom_tabs.clear();
+            app_cfg.sonar_workspace_quad_top_left_tabs.clear();
+            app_cfg.sonar_workspace_quad_top_right_tabs.clear();
+            app_cfg.sonar_workspace_quad_bottom_left_tabs.clear();
+            app_cfg.sonar_workspace_quad_bottom_right_tabs.clear();
             if (sonar_workspace) {
                 switch (sonar_workspace->layoutPreset()) {
                 case DockWorkspace::LayoutPreset::Horizontal:
                     app_cfg.sonar_workspace_split_layout = "horizontal";
+                    {
+                        const auto tabs = sonar_workspace->horizontalPaneTabTitles();
+                        app_cfg.sonar_workspace_horizontal_left_tabs = tabs.first;
+                        app_cfg.sonar_workspace_horizontal_right_tabs = tabs.second;
+                    }
                     break;
                 case DockWorkspace::LayoutPreset::Vertical:
                     app_cfg.sonar_workspace_split_layout = "vertical";
+                    {
+                        const auto tabs = sonar_workspace->verticalPaneTabTitles();
+                        app_cfg.sonar_workspace_vertical_top_tabs = tabs.first;
+                        app_cfg.sonar_workspace_vertical_bottom_tabs = tabs.second;
+                    }
                     break;
                 case DockWorkspace::LayoutPreset::Quad:
                     app_cfg.sonar_workspace_split_layout = "quad";
+                    sonar_workspace->quadPaneTabTitles(
+                        app_cfg.sonar_workspace_quad_top_left_tabs,
+                        app_cfg.sonar_workspace_quad_top_right_tabs,
+                        app_cfg.sonar_workspace_quad_bottom_left_tabs,
+                        app_cfg.sonar_workspace_quad_bottom_right_tabs);
                     break;
                 case DockWorkspace::LayoutPreset::Single:
                 default:
                     app_cfg.sonar_workspace_split_layout = "single";
+                    app_cfg.sonar_workspace_single_tabs = sonar_workspace->singlePaneTabTitles();
                     break;
                 }
             }
@@ -1710,6 +1763,15 @@ int main(int argc, char** argv) {
 
     QObject::connect(settings_dialog.applyButton(), &QPushButton::clicked, [&]() {
         app_cfg = settings_dialog.configFromUi();
+        QString world_sync_error;
+        if (!standalone_mvp::ensureProjectWorldDirectoryForSelection(
+                app_cfg.scene.world, config_store.path(), &world_sync_error)) {
+            QMessageBox::warning(
+                &settings_dialog, QStringLiteral("Settings"),
+                QStringLiteral("Failed to prepare project scene resources for selected world.\n%1")
+                    .arg(world_sync_error));
+            return;
+        }
         global_env_cfg = app_cfg.environment;
         sonar_sound_speed_mps = global_env_cfg.sound_speed_mps;
         fls_module.setEnvironmentConfig(global_env_cfg);
@@ -1723,6 +1785,15 @@ int main(int argc, char** argv) {
     });
     QObject::connect(settings_dialog.saveButton(), &QPushButton::clicked, [&]() {
         app_cfg = settings_dialog.configFromUi();
+        QString world_sync_error;
+        if (!standalone_mvp::ensureProjectWorldDirectoryForSelection(
+                app_cfg.scene.world, config_store.path(), &world_sync_error)) {
+            QMessageBox::warning(
+                &settings_dialog, QStringLiteral("Settings"),
+                QStringLiteral("Failed to prepare project scene resources for selected world.\n%1")
+                    .arg(world_sync_error));
+            return;
+        }
         global_env_cfg = app_cfg.environment;
         sonar_sound_speed_mps = global_env_cfg.sound_speed_mps;
         fls_module.setEnvironmentConfig(global_env_cfg);

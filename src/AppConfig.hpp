@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 #include <vector>
 
 namespace standalone_mvp {
@@ -176,6 +177,15 @@ struct AppConfigData {
     // UI layout persistence.
     bool sonar_window_docked_in_main = true;
     QString sonar_workspace_split_layout = "single"; // single/horizontal/vertical/quad
+    QStringList sonar_workspace_single_tabs;
+    QStringList sonar_workspace_horizontal_left_tabs;
+    QStringList sonar_workspace_horizontal_right_tabs;
+    QStringList sonar_workspace_vertical_top_tabs;
+    QStringList sonar_workspace_vertical_bottom_tabs;
+    QStringList sonar_workspace_quad_top_left_tabs;
+    QStringList sonar_workspace_quad_top_right_tabs;
+    QStringList sonar_workspace_quad_bottom_left_tabs;
+    QStringList sonar_workspace_quad_bottom_right_tabs;
 };
 
 class AppConfigStore {
@@ -193,9 +203,14 @@ private:
 /// Returns empty if the path does not exist or no project file can be resolved.
 QString resolveProjectFileArgument(const QString& file_or_directory);
 
-/// If `world` is relative, and a file exists at `<eslproj_dir>/<world>`, return that absolute path.
-/// Otherwise returns `world` unchanged (bare scene keys still resolve in SharedScene).
+/// Resolve project-local scene world path for a project config.
+/// Supports direct relative path, legacy `scene/...` mapping to `uwmodels/...`,
+/// and bare scene keys from `<eslproj_dir>/uwmodels/scenes/<key>/<key>.world`.
 QString resolveSceneWorldForLoad(const QString& world, const QString& eslproj_path);
+
+/// Ensure selected world exists in `<project>/uwmodels/scenes/<world_key>/`.
+/// If missing, tries to copy from built-in scene roots.
+bool ensureProjectWorldDirectoryForSelection(const QString& world, const QString& eslproj_path, QString* error = nullptr);
 
 /// Initial configuration for the new-project wizard (at most one module per type).
 AppConfigData makeWizardProjectConfig(const QString& project_display_name, bool include_fls, bool include_mbes, bool include_sss);

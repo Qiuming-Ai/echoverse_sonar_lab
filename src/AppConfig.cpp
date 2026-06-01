@@ -10,10 +10,12 @@
 #include <QRegularExpression>
 
 #include <algorithm>
+#include <filesystem>
 
 namespace standalone_mvp {
 
 namespace {
+namespace fs = std::filesystem;
 
 QString sanitizedSonarParamBaseName(QString name) {
     name = name.trimmed();
@@ -69,6 +71,58 @@ QString sonarParamTemplatePath() {
     const QString from_app = QDir::cleanPath(
         QCoreApplication::applicationDirPath() + QStringLiteral("/../") + rel);
     return from_app;
+}
+
+QString worldKeyFromSelection(const QString& world) {
+    const QString w = world.trimmed();
+    if (w.isEmpty()) {
+        return {};
+    }
+    QFileInfo fi(w);
+    if (fi.suffix().compare(QStringLiteral("world"), Qt::CaseInsensitive) == 0) {
+        return fi.completeBaseName();
+    }
+    return fi.fileName();
+}
+
+QStringList builtInSceneRoots() {
+    QStringList roots;
+#if defined(STANDALONE_SIMULATION_DIR)
+    roots << (QStringLiteral(STANDALONE_SIMULATION_DIR) + QStringLiteral("/uwmodels/scenes"));
+#endif
+    roots << (QDir::currentPath() + QStringLiteral("/uwmodels/scenes"));
+    roots << (QCoreApplication::applicationDirPath() + QStringLiteral("/uwmodels/scenes"));
+    return roots;
+}
+
+bool copySceneDirRecursive(const QString& src_dir, const QString& dst_dir, QString* error) {
+    std::error_code ec;
+    const fs::path src_path = fs::path(src_dir.toStdWString());
+    const fs::path dst_path = fs::path(dst_dir.toStdWString());
+    if (!fs::exists(src_path, ec) || !fs::is_directory(src_path, ec)) {
+        if (error) {
+            *error = QStringLiteral("Source scene directory does not exist: %1").arg(src_dir);
+        }
+        return false;
+    }
+    if (fs::exists(dst_path, ec)) {
+        return true;
+    }
+    if (!QDir().mkpath(QFileInfo(dst_dir).absolutePath())) {
+        if (error) {
+            *error = QStringLiteral("Failed to create destination parent directory: %1")
+                         .arg(QFileInfo(dst_dir).absolutePath());
+        }
+        return false;
+    }
+    fs::copy(src_path, dst_path, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        if (error) {
+            *error = QStringLiteral("Failed to copy scene directory:\n%1").arg(QString::fromStdString(ec.message()));
+        }
+        return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -129,6 +183,23 @@ QString readString(const QJsonObject& obj, const char* key, const QString& fallb
     }
     const QString s = obj.value(key).toString();
     return s.isEmpty() ? fallback : s;
+}
+
+QJsonArray stringListToJson(const QStringList& list) {
+    QJsonArray arr;
+    for (const QString& value : list) {
+        arr.append(value);
+    }
+    return arr;
+}
+
+QStringList stringListFromJson(const QJsonObject& obj, const char* key) {
+    QStringList out;
+    const QJsonArray arr = obj.value(key).toArray();
+    for (const QJsonValue& value : arr) {
+        out.push_back(value.toString());
+    }
+    return out;
 }
 
 QJsonObject subCameraToJson(const SubCameraConfig& c) {
@@ -396,6 +467,15 @@ QJsonObject toJson(const AppConfigData& cfg) {
     QJsonObject ui_layout;
     ui_layout["sonar_window_docked_in_main"] = cfg.sonar_window_docked_in_main;
     ui_layout["sonar_workspace_split_layout"] = cfg.sonar_workspace_split_layout;
+    ui_layout["sonar_workspace_single_tabs"] = stringListToJson(cfg.sonar_workspace_single_tabs);
+    ui_layout["sonar_workspace_horizontal_left_tabs"] = stringListToJson(cfg.sonar_workspace_horizontal_left_tabs);
+    ui_layout["sonar_workspace_horizontal_right_tabs"] = stringListToJson(cfg.sonar_workspace_horizontal_right_tabs);
+    ui_layout["sonar_workspace_vertical_top_tabs"] = stringListToJson(cfg.sonar_workspace_vertical_top_tabs);
+    ui_layout["sonar_workspace_vertical_bottom_tabs"] = stringListToJson(cfg.sonar_workspace_vertical_bottom_tabs);
+    ui_layout["sonar_workspace_quad_top_left_tabs"] = stringListToJson(cfg.sonar_workspace_quad_top_left_tabs);
+    ui_layout["sonar_workspace_quad_top_right_tabs"] = stringListToJson(cfg.sonar_workspace_quad_top_right_tabs);
+    ui_layout["sonar_workspace_quad_bottom_left_tabs"] = stringListToJson(cfg.sonar_workspace_quad_bottom_left_tabs);
+    ui_layout["sonar_workspace_quad_bottom_right_tabs"] = stringListToJson(cfg.sonar_workspace_quad_bottom_right_tabs);
 
     QJsonObject root;
     root["scene"] = scene;
@@ -507,6 +587,15 @@ AppConfigData fromJson(const QJsonObject& root) {
         readBool(ui_layout, "sonar_window_docked_in_main", cfg.sonar_window_docked_in_main);
     cfg.sonar_workspace_split_layout =
         readString(ui_layout, "sonar_workspace_split_layout", cfg.sonar_workspace_split_layout).trimmed().toLower();
+    cfg.sonar_workspace_single_tabs = stringListFromJson(ui_layout, "sonar_workspace_single_tabs");
+    cfg.sonar_workspace_horizontal_left_tabs = stringListFromJson(ui_layout, "sonar_workspace_horizontal_left_tabs");
+    cfg.sonar_workspace_horizontal_right_tabs = stringListFromJson(ui_layout, "sonar_workspace_horizontal_right_tabs");
+    cfg.sonar_workspace_vertical_top_tabs = stringListFromJson(ui_layout, "sonar_workspace_vertical_top_tabs");
+    cfg.sonar_workspace_vertical_bottom_tabs = stringListFromJson(ui_layout, "sonar_workspace_vertical_bottom_tabs");
+    cfg.sonar_workspace_quad_top_left_tabs = stringListFromJson(ui_layout, "sonar_workspace_quad_top_left_tabs");
+    cfg.sonar_workspace_quad_top_right_tabs = stringListFromJson(ui_layout, "sonar_workspace_quad_top_right_tabs");
+    cfg.sonar_workspace_quad_bottom_left_tabs = stringListFromJson(ui_layout, "sonar_workspace_quad_bottom_left_tabs");
+    cfg.sonar_workspace_quad_bottom_right_tabs = stringListFromJson(ui_layout, "sonar_workspace_quad_bottom_right_tabs");
 
     cfg.sonar_modules.clear();
     for (int i = 0; i < sonar_modules.size(); ++i) {
@@ -717,12 +806,104 @@ QString resolveSceneWorldForLoad(const QString& world, const QString& eslproj_pa
     if (base_dir.isEmpty()) {
         return w;
     }
-    const QString candidate_path = QDir(base_dir).filePath(w);
-    QFileInfo cand(candidate_path);
-    if (cand.exists() && cand.isFile()) {
-        return QDir::cleanPath(cand.absoluteFilePath());
+    const auto resolve_if_exists = [](const QString& candidate) -> QString {
+        QFileInfo cand(candidate);
+        if (cand.exists() && cand.isFile()) {
+            return QDir::cleanPath(cand.absoluteFilePath());
+        }
+        return QString();
+    };
+
+    const QString direct_rel = resolve_if_exists(QDir(base_dir).filePath(w));
+    if (!direct_rel.isEmpty()) {
+        return direct_rel;
+    }
+
+    // Backward compatibility: old projects may still keep scene files under "scene/<name>/<name>.world".
+    if (w.startsWith(QStringLiteral("scene/"), Qt::CaseInsensitive)) {
+        const QString remapped = QStringLiteral("uwmodels/") + w.mid(QStringLiteral("scene/").size());
+        const QString remapped_path = resolve_if_exists(QDir(base_dir).filePath(remapped));
+        if (!remapped_path.isEmpty()) {
+            return remapped_path;
+        }
+    }
+
+    // When config stores a bare key (e.g. "mangalia"), prefer project-local world file.
+    const QString key_path = resolve_if_exists(
+        QDir(base_dir).filePath(QStringLiteral("uwmodels/scenes/%1/%1.world").arg(w)));
+    if (!key_path.isEmpty()) {
+        return key_path;
     }
     return w;
+}
+
+bool ensureProjectWorldDirectoryForSelection(const QString& world, const QString& eslproj_path, QString* error) {
+    const QString w = world.trimmed();
+    const QString proj = eslproj_path.trimmed();
+    if (w.isEmpty() || proj.isEmpty()) {
+        return true;
+    }
+    const QFileInfo proj_fi(proj);
+    const QString project_dir = proj_fi.absolutePath();
+    if (project_dir.isEmpty()) {
+        return true;
+    }
+
+    const QString world_key = worldKeyFromSelection(w);
+    if (world_key.isEmpty()) {
+        return true;
+    }
+    const QString dst_scene_dir = QDir(project_dir).filePath(QStringLiteral("uwmodels/scenes/%1").arg(world_key));
+    const QString dst_world_file = QDir(dst_scene_dir).filePath(world_key + QStringLiteral(".world"));
+    if (QFileInfo::exists(dst_world_file)) {
+        return true;
+    }
+
+    auto try_copy_from_dir = [&](const QString& src_dir) -> bool {
+        if (src_dir.isEmpty()) {
+            return false;
+        }
+        const QString src_world_file = QDir(src_dir).filePath(world_key + QStringLiteral(".world"));
+        if (!QFileInfo::exists(src_world_file)) {
+            return false;
+        }
+        QString copy_error;
+        if (!copySceneDirRecursive(src_dir, dst_scene_dir, &copy_error)) {
+            if (error) {
+                *error = copy_error;
+            }
+            return false;
+        }
+        return QFileInfo::exists(dst_world_file);
+    };
+
+    const QFileInfo wfi(w);
+    if (wfi.isAbsolute() && wfi.exists() && wfi.isFile()) {
+        if (try_copy_from_dir(wfi.absolutePath())) {
+            return true;
+        }
+    }
+
+    const QString rel_world = QDir(project_dir).filePath(w);
+    QFileInfo rel_fi(rel_world);
+    if (rel_fi.exists() && rel_fi.isFile()) {
+        if (try_copy_from_dir(rel_fi.absolutePath())) {
+            return true;
+        }
+    }
+
+    for (const QString& root : builtInSceneRoots()) {
+        const QString src_dir = QDir(root).filePath(world_key);
+        if (try_copy_from_dir(src_dir)) {
+            return true;
+        }
+    }
+
+    if (error) {
+        *error = QStringLiteral("World '%1' was not found in project uwmodels/scenes or built-in scene roots.")
+                     .arg(world_key);
+    }
+    return false;
 }
 
 AppConfigData makeWizardProjectConfig(const QString& project_display_name, bool include_fls, bool include_mbes, bool include_sss) {

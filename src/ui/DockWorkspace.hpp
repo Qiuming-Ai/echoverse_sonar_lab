@@ -2,6 +2,8 @@
 
 #include <QWidget>
 #include <QPointer>
+#include <QStringList>
+#include <QPair>
 #include <functional>
 
 class QSplitter;
@@ -35,6 +37,18 @@ public:
     void setExtraContextMenuBuilder(std::function<void(QMenu&)> builder);
     LayoutPreset layoutPreset() const;
     void applyLayoutPreset(LayoutPreset preset);
+    QStringList singlePaneTabTitles() const;
+    QPair<QStringList, QStringList> horizontalPaneTabTitles() const;
+    QPair<QStringList, QStringList> verticalPaneTabTitles() const;
+    void quadPaneTabTitles(
+        QStringList& top_left, QStringList& top_right,
+        QStringList& bottom_left, QStringList& bottom_right) const;
+    void restoreSinglePaneTabTitles(const QStringList& single_titles);
+    void restoreHorizontalPaneTabTitles(const QStringList& left_titles, const QStringList& right_titles);
+    void restoreVerticalPaneTabTitles(const QStringList& top_titles, const QStringList& bottom_titles);
+    void restoreQuadPaneTabTitles(
+        const QStringList& top_left_titles, const QStringList& top_right_titles,
+        const QStringList& bottom_left_titles, const QStringList& bottom_right_titles);
 
 signals:
     void layoutPresetChanged();
@@ -80,6 +94,8 @@ private:
     void handleTabDropped(
         const QString& source_pane_id, int tab_index, DockPane* target_pane, int drop_zone_value);
     void showPaneContextMenu(DockPane* pane, const QPoint& global_pos);
+    QStringList tabTitlesForPane(const DockPane* pane) const;
+    void redistributeTabsByTitles(const QList<DockPane*>& target_panes, const QList<QStringList>& ordered_titles);
 
     DockPane* findPaneById(const QString& pane_id) const;
     QList<DockPane*> allPanes() const;

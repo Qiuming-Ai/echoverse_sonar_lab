@@ -312,6 +312,138 @@ void DockWorkspace::applyLayoutPreset(LayoutPreset preset) {
     active_pane_ = target;
 }
 
+QStringList DockWorkspace::tabTitlesForPane(const DockPane* pane) const {
+    QStringList out;
+    if (!pane || !pane->tabs()) {
+        return out;
+    }
+    QTabWidget* tabs = pane->tabs();
+    for (int i = 0; i < tabs->count(); ++i) {
+        out.push_back(tabs->tabText(i));
+    }
+    return out;
+}
+
+QStringList DockWorkspace::singlePaneTabTitles() const {
+    if (layout_mode_ != LayoutMode::Single) {
+        return {};
+    }
+    return tabTitlesForPane(pane_single_);
+}
+
+QPair<QStringList, QStringList> DockWorkspace::horizontalPaneTabTitles() const {
+    if (layout_mode_ != LayoutMode::Horizontal) {
+        return {};
+    }
+    return {tabTitlesForPane(pane_lr_left_), tabTitlesForPane(pane_lr_right_)};
+}
+
+QPair<QStringList, QStringList> DockWorkspace::verticalPaneTabTitles() const {
+    if (layout_mode_ != LayoutMode::Vertical) {
+        return {};
+    }
+    return {tabTitlesForPane(pane_tb_top_), tabTitlesForPane(pane_tb_bottom_)};
+}
+
+void DockWorkspace::quadPaneTabTitles(
+    QStringList& top_left, QStringList& top_right,
+    QStringList& bottom_left, QStringList& bottom_right) const {
+    top_left.clear();
+    top_right.clear();
+    bottom_left.clear();
+    bottom_right.clear();
+    if (layout_mode_ != LayoutMode::Quad) {
+        return;
+    }
+    top_left = tabTitlesForPane(pane_q_tl_);
+    top_right = tabTitlesForPane(pane_q_tr_);
+    bottom_left = tabTitlesForPane(pane_q_bl_);
+    bottom_right = tabTitlesForPane(pane_q_br_);
+}
+
+void DockWorkspace::redistributeTabsByTitles(
+    const QList<DockPane*>& target_panes, const QList<QStringList>& ordered_titles) {
+    if (target_panes.isEmpty() || ordered_titles.size() != target_panes.size()) {
+        return;
+    }
+    QList<TabPayload> pool = takeAllTabs();
+    auto take_first_by_title = [&](const QString& title, TabPayload& out_payload) -> bool {
+        for (int i = 0; i < pool.size(); ++i) {
+            if (pool[i].page && pool[i].title == title) {
+                out_payload = pool.takeAt(i);
+                return true;
+            }
+        }
+        return false;
+    };
+
+    for (int i = 0; i < target_panes.size(); ++i) {
+        DockPane* pane = target_panes[i];
+        if (!pane) {
+            continue;
+        }
+        QList<TabPayload> picked;
+        for (const QString& title : ordered_titles[i]) {
+            TabPayload payload;
+            if (take_first_by_title(title, payload)) {
+                picked.push_back(payload);
+            }
+        }
+        appendTabs(pane, picked);
+    }
+
+    if (!pool.isEmpty()) {
+        DockPane* fallback = target_panes.first();
+        if (!fallback) {
+            fallback = ensureActivePane();
+        }
+        appendTabs(fallback, pool);
+    }
+
+    DockPane* first_non_empty = nullptr;
+    for (DockPane* pane : target_panes) {
+        if (pane && pane->tabs() && pane->tabs()->count() > 0) {
+            first_non_empty = pane;
+            break;
+        }
+    }
+    active_pane_ = first_non_empty ? first_non_empty : ensureActivePane();
+}
+
+void DockWorkspace::restoreSinglePaneTabTitles(const QStringList& single_titles) {
+    if (layout_mode_ != LayoutMode::Single || !pane_single_) {
+        return;
+    }
+    redistributeTabsByTitles({pane_single_}, {single_titles});
+}
+
+void DockWorkspace::restoreHorizontalPaneTabTitles(
+    const QStringList& left_titles, const QStringList& right_titles) {
+    if (layout_mode_ != LayoutMode::Horizontal || !pane_lr_left_ || !pane_lr_right_) {
+        return;
+    }
+    redistributeTabsByTitles({pane_lr_left_, pane_lr_right_}, {left_titles, right_titles});
+}
+
+void DockWorkspace::restoreVerticalPaneTabTitles(
+    const QStringList& top_titles, const QStringList& bottom_titles) {
+    if (layout_mode_ != LayoutMode::Vertical || !pane_tb_top_ || !pane_tb_bottom_) {
+        return;
+    }
+    redistributeTabsByTitles({pane_tb_top_, pane_tb_bottom_}, {top_titles, bottom_titles});
+}
+
+void DockWorkspace::restoreQuadPaneTabTitles(
+    const QStringList& top_left_titles, const QStringList& top_right_titles,
+    const QStringList& bottom_left_titles, const QStringList& bottom_right_titles) {
+    if (layout_mode_ != LayoutMode::Quad || !pane_q_tl_ || !pane_q_tr_ || !pane_q_bl_ || !pane_q_br_) {
+        return;
+    }
+    redistributeTabsByTitles(
+        {pane_q_tl_, pane_q_tr_, pane_q_bl_, pane_q_br_},
+        {top_left_titles, top_right_titles, bottom_left_titles, bottom_right_titles});
+}
+
 void DockWorkspace::splitActiveLeft() {
     if (layout_mode_ != LayoutMode::Single) return;
     QList<TabPayload> tabs = takeAllTabs();

@@ -77,7 +77,7 @@ bool copyWorldIntoProjectScene(const QString& world_key, const QString& project_
         }
         return false;
     }
-    const QString dst_parent = QDir(project_dir).filePath(QStringLiteral("scene"));
+    const QString dst_parent = QDir(project_dir).filePath(QStringLiteral("uwmodels/scenes"));
     const QString dst_dir = QDir(dst_parent).filePath(world_key);
     std::error_code ec;
     const fs::path dst_path(QString(dst_dir).toStdWString());
@@ -93,7 +93,7 @@ bool copyWorldIntoProjectScene(const QString& world_key, const QString& project_
     }
     if (!QDir().mkpath(dst_parent)) {
         if (error_out) {
-            *error_out = QStringLiteral("Failed to create scene directory.");
+            *error_out = QStringLiteral("Failed to create project uwmodels/scenes directory.");
         }
         return false;
     }
@@ -351,7 +351,7 @@ private:
         }
         standalone_mvp::AppConfigData cfg = standalone_mvp::makeWizardProjectConfig(
             base_name, fls_check_->isChecked(), mbes_check_->isChecked(), sss_check_->isChecked());
-        cfg.scene.world = QStringLiteral("scene/%1/%2.world").arg(world_key, world_key);
+        cfg.scene.world = QStringLiteral("uwmodels/scenes/%1/%2.world").arg(world_key, world_key);
         cfg.pose.x = pos_x_->value();
         cfg.pose.y = pos_y_->value();
         cfg.pose.z = pos_z_->value();

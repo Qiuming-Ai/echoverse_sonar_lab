@@ -47,6 +47,35 @@ namespace {
 std::filesystem::path getExecutableDir();
 #endif
 
+std::vector<std::filesystem::path> g_scene_project_roots;
+
+void configureSceneProjectRoots(const std::string& world_spec) {
+    g_scene_project_roots.clear();
+    if (world_spec.empty()) {
+        return;
+    }
+    std::error_code ec;
+    std::filesystem::path world_path(world_spec);
+    if (!std::filesystem::exists(world_path, ec) || !std::filesystem::is_regular_file(world_path, ec)) {
+        return;
+    }
+    std::filesystem::path cur = world_path.parent_path();
+    while (!cur.empty()) {
+        if (cur.filename() == "uwmodels") {
+            const std::filesystem::path project_root = cur.parent_path();
+            if (!project_root.empty()) {
+                g_scene_project_roots.push_back(project_root);
+            }
+            break;
+        }
+        const std::filesystem::path parent = cur.parent_path();
+        if (parent == cur) {
+            break;
+        }
+        cur = parent;
+    }
+}
+
 struct ParsedMaterial {
     std::optional<osg::Vec4> ambient;
     std::optional<osg::Vec4> diffuse;
@@ -134,10 +163,16 @@ osg::ref_ptr<osg::Node> createFallbackNode(float range_m, const SceneModel& mode
 }
 
 std::string resolveRepoPath(const std::string& relative_path) {
+    std::error_code ec;
+    for (const auto& project_root : g_scene_project_roots) {
+        const std::filesystem::path candidate = project_root / relative_path;
+        if (std::filesystem::exists(candidate, ec)) {
+            return candidate.generic_string();
+        }
+    }
 #if defined(STANDALONE_SIMULATION_DIR)
     const std::string base = std::string(STANDALONE_SIMULATION_DIR);
     std::string candidate = base + "/" + relative_path;
-    std::error_code ec;
     if (std::filesystem::exists(candidate, ec)) {
         return candidate;
     }
@@ -1148,22 +1183,24 @@ void populateWorldModelsGroup(osg::Group* world_models, float range_m, const std
     if (!world_models) {
         return;
     }
+    const std::string resolved_world_path = resolveWorldFilePath(world_spec);
+    configureSceneProjectRoots(resolved_world_path);
     const auto includes_opt = parseWorldIncludes(world_spec);
     if (!includes_opt) {
         const SceneSpec& fb = selectScene(worldSpecToSceneKey(world_spec));
-        std::cout << "[scene] world=" << resolveWorldFilePath(world_spec) << " (fallback: world file unreadable) -> " << fb.world_name
+        std::cout << "[scene] world=" << resolved_world_path << " (fallback: world file unreadable) -> " << fb.world_name
                   << std::endl;
         appendSceneModelsToGroup(world_models, range_m, fb);
         return;
     }
     if (includes_opt->empty()) {
-        std::cout << "[scene] world=" << resolveWorldFilePath(world_spec) << " (0 includes — empty preview)" << std::endl;
+        std::cout << "[scene] world=" << resolved_world_path << " (0 includes — empty preview)" << std::endl;
         SceneSpec empty{};
         appendSceneModelsToGroup(world_models, range_m, empty);
         return;
     }
     SceneSpec dynamic_scene = loadSceneFromWorld(world_spec);
-    std::cout << "[scene] world=" << resolveWorldFilePath(world_spec) << " (from world file)" << std::endl;
+    std::cout << "[scene] world=" << resolved_world_path << " (from world file)" << std::endl;
     appendSceneModelsToGroup(world_models, range_m, dynamic_scene);
 }
 

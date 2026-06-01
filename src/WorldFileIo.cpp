@@ -103,12 +103,11 @@ QString formatIncludeBlock(const QString& model_name, const std::array<double, 6
 
 } // namespace
 
-QStringList discoverSdfModelNames() {
+QStringList discoverSdfModelNames(const QString& project_root) {
     QStringList roots;
-#if defined(STANDALONE_SIMULATION_DIR)
-    roots << (QStringLiteral(STANDALONE_SIMULATION_DIR) + QStringLiteral("/uwmodels/sdf"));
-#endif
-    roots << (QDir::currentPath() + QStringLiteral("/uwmodels/sdf"));
+    if (!project_root.trimmed().isEmpty()) {
+        roots << QDir(project_root).filePath(QStringLiteral("uwmodels/sdf"));
+    }
     roots << (QCoreApplication::applicationDirPath() + QStringLiteral("/uwmodels/sdf"));
     QSet<QString> names;
     for (const QString& r : roots) {
