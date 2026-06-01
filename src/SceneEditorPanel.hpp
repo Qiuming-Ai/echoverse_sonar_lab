@@ -27,6 +27,9 @@ public:
     void setPauseSonarCallback(std::function<void(bool)> fn);
     void setProjectRoot(const QString& project_root);
 
+signals:
+    void sceneContentChanged();
+
 private slots:
     void onAddModel();
     void onEditPose();

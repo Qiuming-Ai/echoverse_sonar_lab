@@ -20,6 +20,20 @@ struct SceneConfig {
     bool third_person_view_enabled = false;
 };
 
+struct PathWaypointConfig {
+    double x = 0.0;
+    double y = 0.0;
+    double depth_m = 5.0;
+    double speed_mps = 1.0; // Used for segment i -> i+1.
+};
+
+struct PathModeConfig {
+    bool enabled = false;
+    bool loop = false;
+    bool auto_start = false;
+    std::vector<PathWaypointConfig> waypoints;
+};
+
 struct PoseConfig {
     double x = 49.34;
     double y = 106.01;
@@ -159,6 +173,7 @@ struct SonarModuleConfig {
 
 struct AppConfigData {
     SceneConfig scene;
+    PathModeConfig path_mode;
     PoseConfig pose;
     EnvironmentConfig environment;
     SonarConfigUi sonar;

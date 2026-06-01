@@ -38,6 +38,14 @@ public:
         _viewer->getCamera()->setViewMatrixAsLookAt(eye, center, up);
     }
 
+    void setProjectionPerspective(double fovYDeg, double aspect, double zNear, double zFar) {
+        _viewer->getCamera()->setProjectionMatrixAsPerspective(fovYDeg, aspect, zNear, zFar);
+    }
+
+    void setProjectionOrtho(double left, double right, double bottom, double top, double zNear, double zFar) {
+        _viewer->getCamera()->setProjectionMatrixAsOrtho(left, right, bottom, top, zNear, zFar);
+    }
+
     void getViewPose(osg::Vec3d& eye, osg::Vec3d& center, osg::Vec3d& up) {
         _viewer->getCamera()->getViewMatrixAsLookAt(eye, center, up);
     }

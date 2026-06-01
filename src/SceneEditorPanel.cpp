@@ -345,6 +345,7 @@ void SceneEditorPanel::onAddModel() {
     }
     reloadSceneGraph();
     refreshTable();
+    emit sceneContentChanged();
 }
 
 void SceneEditorPanel::onEditPose() {
@@ -368,6 +369,7 @@ void SceneEditorPanel::onEditPose() {
     }
     reloadSceneGraph();
     refreshTable();
+    emit sceneContentChanged();
 }
 
 void SceneEditorPanel::onDeleteModel() {
@@ -391,6 +393,7 @@ void SceneEditorPanel::onDeleteModel() {
     }
     reloadSceneGraph();
     refreshTable();
+    emit sceneContentChanged();
 }
 
 void SceneEditorPanel::onImportModels() {

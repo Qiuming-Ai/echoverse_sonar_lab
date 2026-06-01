@@ -214,6 +214,43 @@ QJsonObject subCameraToJson(const SubCameraConfig& c) {
     return o;
 }
 
+QJsonObject pathModeToJson(const PathModeConfig& cfg) {
+    QJsonObject out;
+    out["enabled"] = cfg.enabled;
+    out["loop"] = cfg.loop;
+    out["auto_start"] = cfg.auto_start;
+    QJsonArray waypoints;
+    for (const auto& wp : cfg.waypoints) {
+        QJsonObject w;
+        w["x"] = wp.x;
+        w["y"] = wp.y;
+        w["z"] = wp.depth_m;
+        w["depth_m"] = wp.depth_m;
+        w["speed_mps"] = wp.speed_mps;
+        waypoints.append(w);
+    }
+    out["waypoints"] = waypoints;
+    return out;
+}
+
+PathModeConfig pathModeFromJson(const QJsonObject& obj, PathModeConfig cfg) {
+    cfg.enabled = readBool(obj, "enabled", cfg.enabled);
+    cfg.loop = readBool(obj, "loop", cfg.loop);
+    cfg.auto_start = readBool(obj, "auto_start", cfg.auto_start);
+    cfg.waypoints.clear();
+    const QJsonArray waypoints = obj.value("waypoints").toArray();
+    for (const QJsonValue& v : waypoints) {
+        const QJsonObject w = v.toObject();
+        PathWaypointConfig wp;
+        wp.x = readDouble(w, "x", 0.0);
+        wp.y = readDouble(w, "y", 0.0);
+        wp.depth_m = readDouble(w, "z", readDouble(w, "depth_m", -5.0));
+        wp.speed_mps = std::max(0.001, readDouble(w, "speed_mps", 1.0));
+        cfg.waypoints.push_back(wp);
+    }
+    return cfg;
+}
+
 QString sonarTypeToString(SonarModuleType type) {
     switch (type) {
     case SonarModuleType::FLS: return "FLS";
@@ -392,6 +429,7 @@ QJsonObject toJson(const AppConfigData& cfg) {
     scene["viewer_width"] = cfg.scene.viewer_width;
     scene["initial_pitch_deg"] = cfg.scene.initial_pitch_deg;
     scene["third_person_view_enabled"] = cfg.scene.third_person_view_enabled;
+    QJsonObject path_mode = pathModeToJson(cfg.path_mode);
 
     QJsonObject pose;
     pose["x"] = cfg.pose.x;
@@ -479,6 +517,7 @@ QJsonObject toJson(const AppConfigData& cfg) {
 
     QJsonObject root;
     root["scene"] = scene;
+    root["path_mode"] = path_mode;
     root["pose"] = pose;
     root["environment"] = environment;
     root["sonar"] = sonar;
@@ -498,6 +537,7 @@ QJsonObject toJson(const AppConfigData& cfg) {
 AppConfigData fromJson(const QJsonObject& root) {
     AppConfigData cfg;
     const QJsonObject scene = root.value("scene").toObject();
+    const QJsonObject path_mode = root.value("path_mode").toObject();
     const QJsonObject pose = root.value("pose").toObject();
     const QJsonObject sonar = root.value("sonar").toObject();
     const QJsonObject environment = root.value("environment").toObject();
@@ -516,6 +556,7 @@ AppConfigData fromJson(const QJsonObject& root) {
     cfg.scene.viewer_width = std::max(320, readInt(scene, "viewer_width", cfg.scene.viewer_width));
     cfg.scene.initial_pitch_deg = readDouble(scene, "initial_pitch_deg", cfg.scene.initial_pitch_deg);
     cfg.scene.third_person_view_enabled = readBool(scene, "third_person_view_enabled", cfg.scene.third_person_view_enabled);
+    cfg.path_mode = pathModeFromJson(path_mode, cfg.path_mode);
 
     cfg.pose.x = readDouble(pose, "x", cfg.pose.x);
     cfg.pose.y = readDouble(pose, "y", cfg.pose.y);

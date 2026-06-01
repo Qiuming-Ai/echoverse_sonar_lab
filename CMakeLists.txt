@@ -201,6 +201,8 @@ if(USE_REAL_SONAR_CORE)
         src/SssModule.cpp
         src/WorldFileIo.cpp
         src/SceneEditorPanel.cpp
+        src/PathEditorPanel.cpp
+        src/PathFollower.cpp
         src/echoverse_sonar_lab.cpp
         src/ui/DockWorkspace.cpp
         src/ui/DraggableTabBar.cpp
@@ -217,6 +219,7 @@ if(USE_REAL_SONAR_CORE)
         ${REPO_SIMULATION_DIR}/sonar_core/SignalProcessingUtils.cpp
         ${REPO_SIMULATION_DIR}/sonar_imaging/SceneDepthComposer.cpp
         ${REPO_SIMULATION_DIR}/sonar_imaging/OffscreenCaptureRig.cpp
+        ${REPO_SIMULATION_DIR}/sonar_imaging/TopDownDepthMapGenerator.cpp
         ${REPO_SIMULATION_DIR}/sonar_imaging/GeometryTextureTools.cpp
     )
     if(WIN32)

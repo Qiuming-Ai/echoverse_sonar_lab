@@ -13,6 +13,8 @@
 #include "MbesModule.hpp"
 #include "SssModule.hpp"
 #include "SceneEditorPanel.hpp"
+#include "PathEditorPanel.hpp"
+#include "PathFollower.hpp"
 
 #include <QApplication>
 #include <QEventLoop>
@@ -1099,6 +1101,14 @@ int main(int argc, char** argv) {
     PoseState commanded_pose;
     commanded_pose = configured_pose;
     const PoseState auto_pose_origin = configured_pose;
+    standalone_mvp::PathFollower path_follower;
+    bool path_mode_running = false;
+    auto path_last_tick = std::chrono::steady_clock::now();
+    if (app_cfg.path_mode.enabled && app_cfg.path_mode.auto_start && app_cfg.path_mode.waypoints.size() >= 2) {
+        path_follower.configure(app_cfg.path_mode.waypoints, app_cfg.path_mode.loop, configured_pose.pitch);
+        path_follower.start();
+        path_mode_running = path_follower.running();
+    }
     viewer.addEventHandler(
         new PoseControlHandler(commanded_pose, pose_step_xy, pose_step_yaw, pose_step_pitch, pose_step_z, trackball.get()));
     std::cout << "[gui] control mode=" << (enable_auto_pose ? "auto(debug)" : "manual(default)")
@@ -1121,6 +1131,9 @@ int main(int argc, char** argv) {
     QPushButton sonar_dock_button("Show Sonar", &dashboard_window);
     QPushButton settings_button("Settings", &dashboard_window);
     QPushButton scene_editor_button("Scene Editor", &dashboard_window);
+    QPushButton path_mode_button("Path Mode", &dashboard_window);
+    QPushButton path_start_button("Start", &dashboard_window);
+    QPushButton path_stop_button("Stop", &dashboard_window);
     sonar_dock_button.setStyleSheet(
         "QPushButton{background:#3b4f66;color:#ffffff;border:1px solid #a7c6e8;border-radius:6px;padding:6px 12px;font-weight:600;}"
         "QPushButton:hover{background:#4b6888;}");
@@ -1130,8 +1143,20 @@ int main(int argc, char** argv) {
     settings_button.setStyleSheet(
         "QPushButton{background:#1f5c97;color:#ffffff;border:1px solid #97c0e6;border-radius:6px;padding:6px 12px;font-weight:600;}"
         "QPushButton:hover{background:#2f74b5;}");
+    path_mode_button.setStyleSheet(
+        "QPushButton{background:#5a3f78;color:#ffffff;border:1px solid #b79ad9;border-radius:6px;padding:6px 12px;font-weight:600;}"
+        "QPushButton:hover{background:#6f5292;}");
+    path_start_button.setStyleSheet(
+        "QPushButton{background:#237a43;color:#ffffff;border:1px solid #9ad8b0;border-radius:6px;padding:6px 12px;font-weight:600;}"
+        "QPushButton:hover{background:#2d9552;}");
+    path_stop_button.setStyleSheet(
+        "QPushButton{background:#7d2d2d;color:#ffffff;border:1px solid #d5a0a0;border-radius:6px;padding:6px 12px;font-weight:600;}"
+        "QPushButton:hover{background:#964040;}");
     top_bar->addWidget(&sonar_dock_button, 0, Qt::AlignRight);
     top_bar->addWidget(&scene_editor_button, 0, Qt::AlignRight);
+    top_bar->addWidget(&path_mode_button, 0, Qt::AlignRight);
+    top_bar->addWidget(&path_start_button, 0, Qt::AlignRight);
+    top_bar->addWidget(&path_stop_button, 0, Qt::AlignRight);
     top_bar->addWidget(&settings_button, 0, Qt::AlignRight);
     root_layout->addLayout(top_bar);
 
@@ -1262,7 +1287,16 @@ int main(int argc, char** argv) {
 
     auto* viewer_frame = new QFrame(&dashboard_window);
     viewer_frame->setStyleSheet("QFrame{background:#000000;border:1px solid #6ea2d4;}");
-    content_layout->addWidget(viewer_frame, 1);
+    auto* live_minimap = new standalone_mvp::PathEditorPanel(content_container);
+    live_minimap->setMinimumWidth(300);
+    live_minimap->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    live_minimap->setCompactLiveMapMode(true);
+    live_minimap->setSceneRoot(standalone_mvp::findWorldModelsGroup(root.get()));
+    live_minimap->setProjectContext(QFileInfo(config_store.path()).absolutePath(), world_for_scene);
+    live_minimap->setPathConfig(app_cfg.path_mode);
+    auto* path_editor = live_minimap;
+    content_layout->addWidget(live_minimap, 1);
+    content_layout->addWidget(viewer_frame, 3);
     auto* scene_editor_dialog = new QDialog(&dashboard_window);
     scene_editor_dialog->setWindowTitle("Scene Editor");
     scene_editor_dialog->setWindowFlag(Qt::Window, true);
@@ -1279,6 +1313,26 @@ int main(int argc, char** argv) {
         scene_editor->setPauseSonarCallback([&](bool on) { scene_edit_pauses_sonar.store(on); });
     }
     scene_editor_dialog_layout->addWidget(scene_editor);
+    QObject::connect(path_editor, &standalone_mvp::PathEditorPanel::pathEdited, [&](const standalone_mvp::PathModeConfig& cfg) {
+        app_cfg.path_mode = cfg;
+    });
+    QObject::connect(path_editor, &standalone_mvp::PathEditorPanel::startRequested, [&](const standalone_mvp::PathModeConfig& cfg) {
+        app_cfg.path_mode = cfg;
+        app_cfg.path_mode.enabled = true;
+        enable_auto_pose = false;
+        path_follower.configure(app_cfg.path_mode.waypoints, app_cfg.path_mode.loop, commanded_pose.pitch);
+        path_follower.start();
+        path_mode_running = path_follower.running();
+        path_last_tick = std::chrono::steady_clock::now();
+    });
+    QObject::connect(path_editor, &standalone_mvp::PathEditorPanel::stopRequested, [&]() {
+        path_follower.stop();
+        path_mode_running = false;
+        app_cfg.path_mode.enabled = false;
+    });
+    QObject::connect(scene_editor, &standalone_mvp::SceneEditorPanel::sceneContentChanged, [path_editor]() {
+        path_editor->notifySceneChanged();
+    });
     auto* sonar_dock_panel = new QWidget(&dashboard_window);
     sonar_dock_panel->setStyleSheet("QWidget{background:#505050;color:#eaf4ff;border:1px solid #6ea2d4;}");
     sonar_dock_panel->setMinimumHeight(0);
@@ -1406,6 +1460,12 @@ int main(int argc, char** argv) {
     settings_button.setDefault(false);
     scene_editor_button.setAutoDefault(false);
     scene_editor_button.setDefault(false);
+    path_mode_button.setAutoDefault(false);
+    path_mode_button.setDefault(false);
+    path_start_button.setAutoDefault(false);
+    path_start_button.setDefault(false);
+    path_stop_button.setAutoDefault(false);
+    path_stop_button.setDefault(false);
     QObject::connect(&settings_button, &QPushButton::pressed, [&settings_dialog]() {
         QMetaObject::invokeMethod(&settings_dialog, [&settings_dialog]() {
             settings_dialog.setWindowState((settings_dialog.windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
@@ -1421,6 +1481,42 @@ int main(int argc, char** argv) {
             scene_editor_dialog->raise();
             scene_editor_dialog->activateWindow();
         }, Qt::QueuedConnection);
+    });
+    bool path_mode_enabled_ui = false;
+    auto refresh_path_run_buttons = [&]() {
+        path_start_button.setEnabled(path_mode_enabled_ui);
+        path_stop_button.setEnabled(path_mode_enabled_ui);
+    };
+    refresh_path_run_buttons();
+    QObject::connect(&path_mode_button, &QPushButton::pressed, [&]() {
+        path_mode_enabled_ui = !path_mode_enabled_ui;
+        path_editor->setCompactLiveMapMode(!path_mode_enabled_ui);
+        if (path_mode_enabled_ui) {
+            path_mode_button.setText("Normal Mode");
+        } else {
+            path_mode_button.setText("Path Mode");
+        }
+        refresh_path_run_buttons();
+    });
+    QObject::connect(&path_start_button, &QPushButton::clicked, [&]() {
+        if (!path_mode_enabled_ui) {
+            return;
+        }
+        app_cfg.path_mode = path_editor->pathConfig();
+        app_cfg.path_mode.enabled = true;
+        enable_auto_pose = false;
+        path_follower.configure(app_cfg.path_mode.waypoints, app_cfg.path_mode.loop, commanded_pose.pitch);
+        path_follower.start();
+        path_mode_running = path_follower.running();
+        path_last_tick = std::chrono::steady_clock::now();
+    });
+    QObject::connect(&path_stop_button, &QPushButton::clicked, [&]() {
+        if (!path_mode_enabled_ui) {
+            return;
+        }
+        path_follower.stop();
+        path_mode_running = false;
+        app_cfg.path_mode.enabled = false;
     });
 
     enum class SonarWindowMode {
@@ -1762,7 +1858,9 @@ int main(int argc, char** argv) {
     };
 
     QObject::connect(settings_dialog.applyButton(), &QPushButton::clicked, [&]() {
+        const standalone_mvp::PathModeConfig previous_path_mode = app_cfg.path_mode;
         app_cfg = settings_dialog.configFromUi();
+        app_cfg.path_mode = previous_path_mode;
         QString world_sync_error;
         if (!standalone_mvp::ensureProjectWorldDirectoryForSelection(
                 app_cfg.scene.world, config_store.path(), &world_sync_error)) {
@@ -1778,13 +1876,16 @@ int main(int argc, char** argv) {
         mbes_module.setEnvironmentConfig(global_env_cfg);
         for (auto& extra : extra_fls_modules_rt) extra->setEnvironmentConfig(global_env_cfg);
         for (auto& extra : extra_mbes_modules_rt) extra->setEnvironmentConfig(global_env_cfg);
+        path_editor->setPathConfig(app_cfg.path_mode);
         restart_requested = true;
         settings_dialog.setRestartHintVisible(true);
         persist_runtime_to_config();
         viewer.setDone(true);
     });
     QObject::connect(settings_dialog.saveButton(), &QPushButton::clicked, [&]() {
+        const standalone_mvp::PathModeConfig previous_path_mode = app_cfg.path_mode;
         app_cfg = settings_dialog.configFromUi();
+        app_cfg.path_mode = previous_path_mode;
         QString world_sync_error;
         if (!standalone_mvp::ensureProjectWorldDirectoryForSelection(
                 app_cfg.scene.world, config_store.path(), &world_sync_error)) {
@@ -1800,6 +1901,7 @@ int main(int argc, char** argv) {
         mbes_module.setEnvironmentConfig(global_env_cfg);
         for (auto& extra : extra_fls_modules_rt) extra->setEnvironmentConfig(global_env_cfg);
         for (auto& extra : extra_mbes_modules_rt) extra->setEnvironmentConfig(global_env_cfg);
+        path_editor->setPathConfig(app_cfg.path_mode);
         restart_requested = true;
         settings_dialog.setRestartHintVisible(true);
         persist_runtime_to_config();
@@ -1853,6 +1955,32 @@ int main(int argc, char** argv) {
                   << std::endl;
         QProcess::startDetached(app_path, args);
     };
+    auto resolve_active_pose = [&](int frame_idx) {
+        PoseState active_pose = commanded_pose;
+        if (path_mode_running) {
+            const auto now = std::chrono::steady_clock::now();
+            const double dt = std::max(0.0, std::chrono::duration<double>(now - path_last_tick).count());
+            path_last_tick = now;
+            standalone_mvp::PathFollowerPose path_pose;
+            if (path_follower.update(dt, &path_pose)) {
+                active_pose.position = path_pose.position;
+                active_pose.yaw = path_pose.yaw;
+                active_pose.pitch = path_pose.pitch;
+                commanded_pose = active_pose;
+            }
+            if (!path_follower.running()) {
+                path_mode_running = false;
+                app_cfg.path_mode.enabled = false;
+            }
+        } else if (enable_auto_pose) {
+            const double t = static_cast<double>(frame_idx) * 0.01;
+            active_pose.position = auto_pose_origin.position +
+                Eigen::Vector3d(2.0 * std::sin(t), 1.2 * std::cos(t * 0.7), 0.6 * std::sin(t * 0.5));
+            active_pose.yaw = auto_pose_origin.yaw + 0.35 * std::sin(0.5 * t);
+            active_pose.pitch = auto_pose_origin.pitch + 0.18 * std::cos(0.4 * t);
+        }
+        return active_pose;
+    };
     if (max_frames > 0) {
         int frames = 0;
         while (!viewer.done() && frames < max_frames) {
@@ -1878,7 +2006,7 @@ int main(int argc, char** argv) {
                 extra->consumePointCloudUiConfig();
             }
             bool pose_cmd_changed = false;
-            if (!scripted_keys.empty() && (frames % 20) == 0) {
+            if (!path_mode_running && !scripted_keys.empty() && (frames % 20) == 0) {
                 const int scripted = scripted_keys[scripted_key_index % scripted_keys.size()];
                 ++scripted_key_index;
                 if (applyControlKey(scripted, commanded_pose, pose_step_xy, pose_step_yaw, pose_step_pitch, pose_step_z)) {
@@ -1889,17 +2017,11 @@ int main(int argc, char** argv) {
                               << ") yaw=" << commanded_pose.yaw << " pitch=" << commanded_pose.pitch << std::endl;
                 }
             }
-            const double t = static_cast<double>(frames) * 0.01;
-            PoseState active_pose = commanded_pose;
-            if (enable_auto_pose) {
-                active_pose.position = auto_pose_origin.position +
-                    Eigen::Vector3d(2.0 * std::sin(t), 1.2 * std::cos(t * 0.7), 0.6 * std::sin(t * 0.5));
-                active_pose.yaw = auto_pose_origin.yaw + 0.35 * std::sin(0.5 * t);
-                active_pose.pitch = auto_pose_origin.pitch + 0.18 * std::cos(0.4 * t);
-            }
+            PoseState active_pose = resolve_active_pose(frames);
             syncTrackballToPose(trackball.get(), active_pose);
             setCameraViewFromPose(viewer.getCamera(), active_pose);
             camera_module.updateViews(active_pose.position, active_pose.yaw, active_pose.pitch);
+            path_editor->setLivePose(active_pose.position.x(), active_pose.position.y(), active_pose.yaw);
             fls_module.setPointCloudRenderBlocked(true);
             for (auto& extra : extra_fls_modules_rt) extra->setPointCloudRenderBlocked(true);
             mbes_module.setPointCloudRenderBlocked(true);
@@ -2082,7 +2204,9 @@ int main(int argc, char** argv) {
             if (enable_opencv_window) {
                 std::cout << "[gui] frame " << frames << " image update begin" << std::endl;
                 const int key = cv::waitKey(1);
-                if (key >= 0 && applyControlKey(key, commanded_pose, pose_step_xy, pose_step_yaw, pose_step_pitch, pose_step_z)) {
+                if (!path_mode_running &&
+                    key >= 0 &&
+                    applyControlKey(key, commanded_pose, pose_step_xy, pose_step_yaw, pose_step_pitch, pose_step_z)) {
                     pose_cmd_changed = true;
                     syncTrackballToPose(trackball.get(), commanded_pose);
                     std::cout << "[gui] pose_cmd key=" << static_cast<char>(key)
@@ -2128,7 +2252,7 @@ int main(int argc, char** argv) {
             extra->consumePointCloudUiConfig();
         }
         bool pose_cmd_changed = false;
-        if (!scripted_keys.empty() && (frames % 20) == 0) {
+        if (!path_mode_running && !scripted_keys.empty() && (frames % 20) == 0) {
             const int scripted = scripted_keys[scripted_key_index % scripted_keys.size()];
             ++scripted_key_index;
             if (applyControlKey(scripted, commanded_pose, pose_step_xy, pose_step_yaw, pose_step_pitch, pose_step_z)) {
@@ -2139,17 +2263,11 @@ int main(int argc, char** argv) {
                           << ") yaw=" << commanded_pose.yaw << " pitch=" << commanded_pose.pitch << std::endl;
             }
         }
-        const double t = static_cast<double>(frames) * 0.01;
-        PoseState active_pose = commanded_pose;
-        if (enable_auto_pose) {
-            active_pose.position = auto_pose_origin.position +
-                Eigen::Vector3d(2.0 * std::sin(t), 1.2 * std::cos(t * 0.7), 0.6 * std::sin(t * 0.5));
-            active_pose.yaw = auto_pose_origin.yaw + 0.35 * std::sin(0.5 * t);
-            active_pose.pitch = auto_pose_origin.pitch + 0.18 * std::cos(0.4 * t);
-        }
+        PoseState active_pose = resolve_active_pose(frames);
         syncTrackballToPose(trackball.get(), active_pose);
         setCameraViewFromPose(viewer.getCamera(), active_pose);
         camera_module.updateViews(active_pose.position, active_pose.yaw, active_pose.pitch);
+        path_editor->setLivePose(active_pose.position.x(), active_pose.position.y(), active_pose.yaw);
         fls_module.setPointCloudRenderBlocked(true);
         for (auto& extra : extra_fls_modules_rt) extra->setPointCloudRenderBlocked(true);
         mbes_module.setPointCloudRenderBlocked(true);
@@ -2332,7 +2450,9 @@ int main(int argc, char** argv) {
         if (enable_opencv_window) {
             std::cout << "[gui] frame " << frames << " image update begin" << std::endl;
             const int key = cv::waitKey(1);
-            if (key >= 0 && applyControlKey(key, commanded_pose, pose_step_xy, pose_step_yaw, pose_step_pitch, pose_step_z)) {
+            if (!path_mode_running &&
+                key >= 0 &&
+                applyControlKey(key, commanded_pose, pose_step_xy, pose_step_yaw, pose_step_pitch, pose_step_z)) {
                 pose_cmd_changed = true;
                 syncTrackballToPose(trackball.get(), commanded_pose);
                 std::cout << "[gui] pose_cmd key=" << static_cast<char>(key)
