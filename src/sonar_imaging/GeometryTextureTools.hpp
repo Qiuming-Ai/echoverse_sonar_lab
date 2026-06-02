@@ -8,6 +8,8 @@
 // OSG includes
 #include <osg/Node>
 #include <osg/Geode>
+#include <osg/Group>
+#include <osg/MatrixTransform>
 #include <osg/TriangleFunctor>
 #include <osg/Texture2D>
 
@@ -127,8 +129,26 @@ namespace sonar_imaging {
             triangle_group_offsets_.push_back(0);
         };
 
-        void apply(osg::Geode &geode)
-        {
+        void apply(osg::Group& group) {
+            if ((group.getNodeMask() & getTraversalMask()) == 0u) {
+                return;
+            }
+            traverse(group);
+        }
+
+        void apply(osg::MatrixTransform& transform) {
+            if ((transform.getNodeMask() & getTraversalMask()) == 0u) {
+                return;
+            }
+            traverse(transform);
+        }
+
+        void apply(osg::Geode& geode) {
+            for (const osg::Node* path_node : getNodePath()) {
+                if (path_node && (path_node->getNodeMask() & getTraversalMask()) == 0u) {
+                    return;
+                }
+            }
             // Every drawable is converted into world-space triangle records.
             triangle_functor_.local_to_world = osg::computeLocalToWorld(this->getNodePath());
 

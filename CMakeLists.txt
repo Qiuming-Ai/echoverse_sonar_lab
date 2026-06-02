@@ -198,6 +198,7 @@ if(USE_REAL_SONAR_CORE)
         src/SonarTcpHub.cpp
         src/SonarOutputUtil.cpp
         src/OutputController.cpp
+        src/StartupProgressDialog.cpp
         src/PointCloudViewerWindow.cpp
         src/CameraModule.cpp
         src/FlsModule.cpp

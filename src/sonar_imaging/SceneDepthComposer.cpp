@@ -1,5 +1,6 @@
 #include "SceneDepthComposer.hpp"
 
+#include <iostream>
 #include <stdexcept>
 
 #include <osg/Program>
@@ -368,6 +369,15 @@ void SceneDepthComposer::attachSceneNode(osg::ref_ptr<osg::Node> node) {
     const std::vector<Triangle> triangles = visitor.collectedTriangles();
     const std::vector<uint> trianglesRef = visitor.triangleGroupOffsets();
     const std::vector<BoundingBox> bboxes = visitor.worldBoundingBoxes();
+
+    std::cout << "[sonar_imaging] geometry texture triangles=" << triangles.size()
+              << " texture_size=" << triangles.size() << "x"
+              << (triangles.empty() ? 0 : triangles.front().flattenToFloatArray().size()) << std::endl;
+    if (triangles.size() > 32768u) {
+        std::cout << "[sonar_imaging] warning: triangle count exceeds GPU texture width limit (32768); "
+                     "OSG will scale the geometry texture and sonar accuracy may degrade"
+                  << std::endl;
+    }
 
     osg::ref_ptr<osg::Texture2D> trianglesTexture;
     triangles2texture(triangles, trianglesRef, bboxes, trianglesTexture);

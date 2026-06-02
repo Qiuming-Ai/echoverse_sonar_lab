@@ -17,6 +17,7 @@
 #include "PathFollower.hpp"
 #include "OutputController.hpp"
 #include "SonarOutputUtil.hpp"
+#include "StartupProgressDialog.hpp"
 
 #include <QApplication>
 #include <QEventLoop>
@@ -33,7 +34,6 @@
 #include <QMessageBox>
 #include <QPixmap>
 #include <QProcess>
-#include <QMessageBox>
 #include <QPushButton>
 #include <QObject>
 #include <QString>
@@ -570,8 +570,11 @@ int main(int argc, char** argv) {
     std::cout << "[gui] startup" << std::endl;
     QString project_path_cli;
     int max_frames = -1;
+    bool launched_from_esl_launcher = false;
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--project") == 0 && i + 1 < argc) {
+        if (std::strcmp(argv[i], standalone_mvp::kEslLauncherCliArg) == 0) {
+            launched_from_esl_launcher = true;
+        } else if (std::strcmp(argv[i], "--project") == 0 && i + 1 < argc) {
             project_path_cli = QString::fromLocal8Bit(argv[++i]);
         } else if (std::strcmp(argv[i], "--max-frames") == 0 && i + 1 < argc) {
             max_frames = std::atoi(argv[++i]);
@@ -589,6 +592,29 @@ int main(int argc, char** argv) {
     static char qt_app_name[] = "EchoVerseSonarLab";
     static char* qt_argv[] = {qt_app_name, nullptr};
     QApplication qt_app(qt_argc, qt_argv);
+
+    if (!launched_from_esl_launcher) {
+        QMessageBox::critical(
+            nullptr,
+            QStringLiteral("EchoVerse Sonar Lab"),
+            QStringLiteral("Please start EchoVerse Sonar Lab from the launcher (esl_launcher.exe)."));
+        return 1;
+    }
+    if (project_path_cli.isEmpty()) {
+        QMessageBox::critical(
+            nullptr,
+            QStringLiteral("EchoVerse Sonar Lab"),
+            QStringLiteral("No project file was specified.\nOpen a project from the launcher."));
+        return 1;
+    }
+
+    StartupProgressDialog startup_progress;
+    startup_progress.show();
+    qt_app.processEvents();
+    auto report_startup_progress = [&](const int value, const QString& status_text) {
+        startup_progress.setProgress(value, status_text);
+    };
+    report_startup_progress(5, QStringLiteral("Loading project configuration..."));
 
     QString config_path_resolved;
     if (!project_path_cli.isEmpty()) {
@@ -610,6 +636,7 @@ int main(int argc, char** argv) {
     if (standalone_mvp::ensureSonarParamFilesForProject(app_cfg, project_dir)) {
         config_store.save(app_cfg);
     }
+    report_startup_progress(12, QStringLiteral("Parsing sonar module configuration..."));
     const standalone_mvp::SonarModuleConfig* primary_fls_module = nullptr;
     const standalone_mvp::SonarModuleConfig* primary_mbes_module = nullptr;
     const standalone_mvp::SonarModuleConfig* primary_sss_module = nullptr;
@@ -771,11 +798,13 @@ int main(int argc, char** argv) {
     std::size_t scripted_key_index = 0;
 
     standalone_mvp::configureOsgDataPath();
+    report_startup_progress(22, QStringLiteral("Loading 3D scene resources..."));
     const QString world_for_scene =
         standalone_mvp::resolveSceneWorldForLoad(app_cfg.scene.world, config_store.path());
     const std::string world_spec = world_for_scene.toStdString();
     osg::ref_ptr<osg::Group> root =
         standalone_mvp::createSharedSceneGraph(range_m, world_spec);
+    report_startup_progress(38, QStringLiteral("Building scene graph..."));
     std::cout << "[gui] scene created, world=" << world_spec
               << ", children=" << root->getNumChildren() << std::endl;
     constexpr unsigned int kSceneMask = 0x1u;
@@ -811,6 +840,7 @@ int main(int argc, char** argv) {
     if (!fls_module.initSimulation(root, kResolutionConstant)) {
         std::cout << "[gui] 2D FLS disabled: skipping acoustic simulator and sonar image rendering" << std::endl;
     }
+    report_startup_progress(52, QStringLiteral("Initializing sonar simulators..."));
     if (!(mbes_ready && mbes_module.initSimulation(root, kResolutionConstant))) {
         std::cout << "[gui] MBES sonar disabled: skipping MBES acoustic simulator and sonar rendering" << std::endl;
     }
@@ -1004,8 +1034,8 @@ int main(int argc, char** argv) {
              Eigen::AngleAxisd(configured_pose.pitch, Eigen::Vector3d::UnitY()) *
              Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitX()))
                 .toRotationMatrix();
-        fls_module.initPointCloudRuntime(root, initial_pose, 80, 700, project_dir, sonar_workspace);
         int extra_idx = 0;
+        fls_module.initPointCloudRuntime(root, initial_pose, 80, 700, project_dir, sonar_workspace);
         for (auto& extra : extra_fls_modules_rt) {
             extra->initPointCloudRuntime(
                 root, initial_pose, 120 + 40 * (extra_idx % 3), 740 + 40 * extra_idx, project_dir, sonar_workspace);
@@ -1036,6 +1066,7 @@ int main(int argc, char** argv) {
             ++extra_idx;
         }
     }
+    report_startup_progress(66, QStringLiteral("Initializing point cloud and output modules..."));
 
     const int viewer_w = std::max(320, app_cfg.scene.viewer_width);
     const int viewer_h = standalone_mvp::viewerHeightForSonarAspect(viewer_w, beam_width_deg, beam_height_deg);
@@ -1043,6 +1074,7 @@ int main(int argc, char** argv) {
               << " (pixel aspect matched to sonar " << beam_width_deg << "x" << beam_height_deg << " deg FOV)"
               << std::endl;
 
+    report_startup_progress(75, QStringLiteral("Initializing 3D viewer..."));
     osgViewer::Viewer viewer;
     viewer.setSceneData(root);
     viewer.setUpViewInWindow(0, 0, viewer_w, viewer_h);
@@ -1129,6 +1161,7 @@ int main(int argc, char** argv) {
         std::cout << "[gui] scripted keys enabled: " << scripted_keys << std::endl;
     }
 
+    report_startup_progress(85, QStringLiteral("Building user interface..."));
     QWidget dashboard_window;
     dashboard_window.setWindowTitle("EchoVerse Sonar Lab");
     dashboard_window.resize(1660, 600);
@@ -1486,7 +1519,7 @@ int main(int argc, char** argv) {
     settings_dialog.setWindowFlag(Qt::Window, true);
     settings_dialog.setWindowFlag(Qt::WindowStaysOnTopHint, true);
     settings_dialog.setFromConfig(app_cfg);
-    settings_dialog.setRestartHintVisible(true);
+    settings_dialog.setRestartHintVisible(false);
     settings_button.setAutoDefault(false);
     settings_button.setDefault(false);
     scene_editor_button.setAutoDefault(false);
@@ -1497,14 +1530,6 @@ int main(int argc, char** argv) {
     path_start_button.setDefault(false);
     path_stop_button.setAutoDefault(false);
     path_stop_button.setDefault(false);
-    QObject::connect(&settings_button, &QPushButton::pressed, [&settings_dialog]() {
-        QMetaObject::invokeMethod(&settings_dialog, [&settings_dialog]() {
-            settings_dialog.setWindowState((settings_dialog.windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
-            settings_dialog.show();
-            settings_dialog.raise();
-            settings_dialog.activateWindow();
-        }, Qt::QueuedConnection);
-    });
     QObject::connect(&scene_editor_button, &QPushButton::pressed, [scene_editor_dialog]() {
         QMetaObject::invokeMethod(scene_editor_dialog, [scene_editor_dialog]() {
             scene_editor_dialog->setWindowState((scene_editor_dialog->windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
@@ -2287,7 +2312,7 @@ int main(int argc, char** argv) {
         }
     };
 
-    QObject::disconnect(&settings_button, nullptr, nullptr, nullptr);
+    report_startup_progress(92, QStringLiteral("Connecting controls and finishing setup..."));
     QObject::connect(&settings_button, &QPushButton::pressed, [&]() {
         sync_runtime_to_config();
         settings_dialog.setFromConfig(app_cfg);
@@ -2350,6 +2375,7 @@ int main(int argc, char** argv) {
         settings_dialog.accept();
         viewer.setDone(true);
     });
+
     dashboard_window.showMaximized();
     apply_main_split_ratio();
     QTimer::singleShot(0, &dashboard_window, [apply_main_split_ratio]() { apply_main_split_ratio(); });
@@ -2388,6 +2414,7 @@ int main(int argc, char** argv) {
             return;
         }
         QStringList args;
+        args << QString::fromUtf8(standalone_mvp::kEslLauncherCliArg);
         const QString project_path = config_store.path().trimmed();
         if (!project_path.isEmpty()) {
             args << QStringLiteral("--project") << QDir::toNativeSeparators(project_path);
@@ -2423,6 +2450,140 @@ int main(int argc, char** argv) {
         }
         return active_pose;
     };
+    auto run_startup_warmup = [&]() {
+        report_startup_progress(94, QStringLiteral("Preparing 3D view..."));
+        const PoseState active_pose = resolve_active_pose(0);
+        syncTrackballToPose(trackball.get(), active_pose);
+        setCameraViewFromPose(viewer.getCamera(), active_pose);
+        camera_module.updateViews(active_pose.position, active_pose.yaw, active_pose.pitch);
+        path_editor->setLivePose(active_pose.position.x(), active_pose.position.y(), active_pose.yaw);
+        fls_module.setPointCloudRenderBlocked(true);
+        for (auto& extra : extra_fls_modules_rt) {
+            extra->setPointCloudRenderBlocked(true);
+        }
+        mbes_module.setPointCloudRenderBlocked(true);
+        for (auto& extra : extra_mbes_modules_rt) {
+            extra->setPointCloudRenderBlocked(true);
+        }
+        viewer.frame();
+        if (third_viewer) {
+            third_viewer->frame();
+        }
+        camera_module.updateWidgets();
+        qt_app.processEvents();
+
+        report_startup_progress(96, QStringLiteral("Initializing sonar GPU resources..."));
+        if (enable_sonar_tick && enable_2d_fls && sonar) {
+            const Eigen::Affine3d pose = bodyAffineFromCameraViewMatrix(viewer.getCamera()->getViewMatrix());
+            fls_module.tick(pose, 0, image_update_stride, nullptr);
+            qt_app.processEvents();
+        }
+        if (enable_sonar_tick) {
+            for (auto& extra : extra_fls_modules_rt) {
+                if (!extra->sonar || !extra->module_cfg.fls_config.enable_2d_fls) {
+                    continue;
+                }
+                Eigen::Affine3d pose = Eigen::Affine3d::Identity();
+                if (!poseFromCameraBinding(extra->module_cfg.camera_binding.toStdString(), pose)) {
+                    continue;
+                }
+                extra->tick(pose, 0, image_update_stride, nullptr);
+                qt_app.processEvents();
+            }
+        }
+        if (enable_sonar_tick && mbes_sonar) {
+            const auto mbes_it = std::find_if(sub_cameras.begin(), sub_cameras.end(), [&](const SubCameraRuntime& sc) {
+                return sc.name == mbes_camera_name;
+            });
+            if (mbes_it != sub_cameras.end()) {
+                const Eigen::Affine3d mbes_pose = bodyAffineFromCameraViewMatrix(mbes_it->camera->getViewMatrix());
+                sonar_types_v2::samples::Sonar mbes_sample;
+                if (mbes_module.tick(mbes_pose, 0, image_update_stride, &mbes_sample)) {
+                    mbes_module.tickPointCloud(mbes_pose, true);
+                }
+                qt_app.processEvents();
+            }
+        }
+        if (enable_sonar_tick) {
+            for (auto& extra : extra_mbes_modules_rt) {
+                if (!extra->sonar || !extra->module_cfg.mbes_config.enable_2d_fls) {
+                    continue;
+                }
+                Eigen::Affine3d mbes_pose = Eigen::Affine3d::Identity();
+                if (!poseFromCameraBinding(extra->module_cfg.camera_binding.toStdString(), mbes_pose)) {
+                    continue;
+                }
+                extra->tick(mbes_pose, 0, image_update_stride, nullptr);
+                extra->tickPointCloud(mbes_pose, true);
+                qt_app.processEvents();
+            }
+        }
+        if (!scene_edit_pauses_sonar.load()) {
+            sss_module.tickFromCameraRuntimes(sub_cameras, global_env_cfg, active_pose.position, 0, image_update_stride);
+            for (auto& extra : extra_sss_modules_rt) {
+                extra->tickFromCameraRuntimes(sub_cameras, global_env_cfg, active_pose.position, 0, image_update_stride);
+            }
+            qt_app.processEvents();
+        }
+
+        report_startup_progress(98, QStringLiteral("Initializing point cloud..."));
+        if (fls_module.point_cloud_runtime_enabled && fls_module.point_cloud_cfg_runtime.enabled) {
+            const Eigen::Affine3d pose = bodyAffineFromCameraViewMatrix(viewer.getCamera()->getViewMatrix());
+            fls_module.tickPointCloud(pose);
+            qt_app.processEvents();
+        }
+        for (auto& extra : extra_fls_modules_rt) {
+            if (!extra->point_cloud_runtime_enabled || !extra->point_cloud_cfg_runtime.enabled) {
+                continue;
+            }
+            Eigen::Affine3d extra_pose = Eigen::Affine3d::Identity();
+            if (!poseFromCameraBinding(extra->module_cfg.camera_binding.toStdString(), extra_pose)) {
+                continue;
+            }
+            extra->tickPointCloud(extra_pose);
+            qt_app.processEvents();
+        }
+        if (mbes_module.bottom_cloud_sim && mbes_module.bottom_cfg_runtime.enabled) {
+            const auto mbes_it = std::find_if(sub_cameras.begin(), sub_cameras.end(), [&](const SubCameraRuntime& sc) {
+                return sc.name == mbes_camera_name;
+            });
+            if (mbes_it != sub_cameras.end()) {
+                const Eigen::Affine3d mbes_pose = bodyAffineFromCameraViewMatrix(mbes_it->camera->getViewMatrix());
+                mbes_module.tickPointCloud(mbes_pose, false);
+                qt_app.processEvents();
+            }
+        }
+        for (auto& extra : extra_mbes_modules_rt) {
+            if (!extra->bottom_cloud_sim || !extra->bottom_cfg_runtime.enabled) {
+                continue;
+            }
+            Eigen::Affine3d mbes_pose = Eigen::Affine3d::Identity();
+            if (!poseFromCameraBinding(extra->module_cfg.camera_binding.toStdString(), mbes_pose)) {
+                continue;
+            }
+            extra->tickPointCloud(mbes_pose, false);
+            qt_app.processEvents();
+        }
+
+        fls_module.setPointCloudRenderBlocked(false);
+        for (auto& extra : extra_fls_modules_rt) {
+            extra->setPointCloudRenderBlocked(false);
+        }
+        mbes_module.setPointCloudRenderBlocked(false);
+        for (auto& extra : extra_mbes_modules_rt) {
+            extra->setPointCloudRenderBlocked(false);
+        }
+
+        const auto warmup_now = std::chrono::steady_clock::now();
+        last_sonar_tick = warmup_now;
+        last_mbes_tick = warmup_now;
+        last_point_cloud_tick = warmup_now;
+        last_viewer_frame_tick = warmup_now;
+
+        report_startup_progress(100, QStringLiteral("Ready"));
+        startup_progress.close();
+    };
+    run_startup_warmup();
     if (max_frames > 0) {
         int frames = 0;
         while (!viewer.done() && frames < max_frames) {

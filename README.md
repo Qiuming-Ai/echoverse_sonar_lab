@@ -69,8 +69,10 @@ cmake --build build_vcpkg --config Release
 
 Common executables after build:
 
-- `build_vcpkg\Release\multibeam_gui.exe`
-- `build_vcpkg\Release\esl_launcher.exe`
+- `build_vcpkg\Release\esl_launcher.exe` — **start the application from here**
+- `build_vcpkg\Release\echoverse_sonar_lab.exe` — main app (launched by the launcher only)
+
+Do not run `echoverse_sonar_lab.exe` directly; it requires `--from-esl-launcher` and a `--project` path that the launcher supplies.
 
 `USE_REAL_SONAR_CORE` is always enabled in this repository and is no longer configurable.
 

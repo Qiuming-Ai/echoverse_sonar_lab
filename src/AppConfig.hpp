@@ -8,6 +8,7 @@ namespace standalone_mvp {
 
 /// Project file suffix (JSON content; use \ref AppConfigStore for load/save).
 inline constexpr const char* kEslprojSuffix = ".eslproj";
+inline constexpr const char* kEslLauncherCliArg = "--from-esl-launcher";
 
 /// Minimum validated 2D sonar beam width/height in degrees (must be > 0; upper bound \ref kMaxSonarBeamDeg).
 inline constexpr double kMinSonarBeamDeg = 1e-9;

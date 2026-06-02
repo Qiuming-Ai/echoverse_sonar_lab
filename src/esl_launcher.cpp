@@ -171,7 +171,8 @@ bool launchEchoverseSonarLab(const QString& eslproj_path) {
     }
     addRecentPath(eslproj_path);
     const QString native = QDir::toNativeSeparators(eslproj_path);
-    if (!QProcess::startDetached(exe, {QStringLiteral("--project"), native})) {
+    if (!QProcess::startDetached(exe, {QString::fromUtf8(standalone_mvp::kEslLauncherCliArg),
+                                       QStringLiteral("--project"), native})) {
         QMessageBox::critical(nullptr, QStringLiteral("EchoVerse Sonar Lab Launcher"),
                               QStringLiteral("Unable to launch EchoVerse Sonar Lab."));
         return false;
