@@ -198,7 +198,64 @@ Applies to structural parameters in Settings Dialog:
 
 ---
 
-## 9. Conclusion
+## 9. Output Session Operation (Start/Stop)
+
+The output session follows runtime module settings and is coordinated centrally (session root + per-module writers + TCP hub listeners).
+
+### 9.1 Start Conditions
+
+An output session starts only when at least one enabled module has output enabled:
+
+- ESL2D `file_output_enabled` or `tcp_output_enabled` (FLS/MBES/SSS),
+- ESL3D point-cloud `file_output_enabled` or `tcp_output_enabled` (FLS/MBES point cloud).
+
+If no module requests output, no session root is created and no TCP listener is started.
+
+### 9.2 Start Behavior (What the User Should Expect)
+
+When session start conditions are met:
+
+1. The app creates a timestamped session root under project directory:  
+   `Sonar Data/<yyyyMMdd_HHmmss>/`
+2. Enabled modules are assigned per-module folders under this root.
+3. Writers/streamers are attached to session paths:
+   - ESL2D: `<module>/2d.esl2d`
+   - ESL3D: `<module>/3d.esl3d` (FLS/MBES point cloud only)
+4. TCP listeners are opened for configured output ports (shared by modules when ports match).
+
+### 9.3 Stop Behavior (What Gets Finalized)
+
+When output session stops:
+
+1. Module output writers/streamers are closed.
+2. Session summary is written to:  
+   `Sonar Data/<timestamp>/recording_summary.json`
+3. TCP listeners are shut down.
+4. For FLS/MBES modules with ESL3D file output enabled, offline post-process may run and write artifacts under:  
+   `<module>/Waveform Data/`
+
+### 9.4 Operator Checklist
+
+- Before start:
+  - confirm module output toggles and ports in `Settings`.
+  - ensure project path is valid (session folders are project-local).
+- During run:
+  - verify growing `.esl2d/.esl3d` files under current session root.
+  - verify TCP client receives `NS2P`/`NS3P` packets if streaming is enabled.
+- After stop:
+  - inspect `recording_summary.json` for duration and per-module frame counts.
+  - use waveform artifacts (if generated) for offline analysis.
+
+For protocol and binary details, see:
+
+- `docs/sonar_tcp_protocol.md`
+- `docs/sonar_esl2d_data_spec.md`
+- `docs/sonar_esl3d_data_spec.md`
+- `docs/output_session_layout.md`
+
+---
+
+## 10. Conclusion
 
 The current visualization and interaction system forms a workflow of
 "**Main-Camera-driven observation + aux-camera-bound imaging + real-time panel tuning + closed-loop feedback via Info Panel**":

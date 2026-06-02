@@ -96,10 +96,10 @@ Row-major index: `idx = row * width + col`; shape `(height, width)`.
 
 Produced by FLS / MBES / SSS when **Enable TCP Output** is on in the 2D sonar settings panel. Each frame is one ping stored **per beam**.
 
-| `sonar_type` | Value | Typical beams | Bearing layout |
-|---:|---:|---|---|
-| FLS | `0` | e.g. 256 | Uniform fan `[-beam_width/2, +beam_width/2]` (e.g. ±65°) |
-| SSS | `1` | 2 | Starboard `0°`, Port `180°` |
+| `sonar_type` | Value | Typical source | Typical beams | Bearing layout |
+|---:|---:|---|---|---|
+| FLS-compatible | `0` | FLS and current MBES ESL2D writer | e.g. 256 | Uniform fan `[-beam_width/2, +beam_width/2]` (e.g. ±65°) |
+| SSS | `1` | SSS | 2 | Starboard `0°`, Port `180°` |
 
 ### Frame Layout
 
@@ -156,7 +156,7 @@ range_k ≈ (bin + 0.5) / bin_count * max_range_m
 - `byte_order`: `"little_endian"`
 - `layout`: `"beam_major"`
 - `data_order`: `"metadata_then_beam_angles_then_intensity"`
-- `sonar_kind`: `"fls"` or `"sss"`
+- `sonar_kind`: `"fls"` or `"sss"` (`"fls"` is also used by current MBES ESL2D output)
 - `sonar_module_name`
 - `frame`: `seq`, `timestamp_us`, `sonar_type`, `beam_count`, `bin_count`, `max_range_m`
 - `beams[]`: per-beam `index`, `bearing_deg`, `bin_count`, `range_start_m`, `range_end_m`, optional `side`

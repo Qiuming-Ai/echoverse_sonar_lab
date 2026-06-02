@@ -5,6 +5,7 @@
 #include "InfoPanelWidget.hpp"
 #include "SettingsDialog.hpp"
 #include "ui/DockWorkspace.hpp"
+#include "ui/OperationGuideDialog.hpp"
 #include "PointCloudSonarSimulation.hpp"
 #include "PointCloudTcpStreamer.hpp"
 #include "PointCloudViewerWindow.hpp"
@@ -1194,6 +1195,7 @@ int main(int argc, char** argv) {
     QPushButton sonar_dock_button("Show Sonar", &dashboard_window);
     QPushButton settings_button("Settings", &dashboard_window);
     QPushButton scene_editor_button("Scene Editor", &dashboard_window);
+    QPushButton operation_guide_button(QStringLiteral("Operation Guide"), &dashboard_window);
     QPushButton path_mode_button("Path Mode", &dashboard_window);
     QPushButton path_start_button("Start", &dashboard_window);
     QPushButton path_stop_button("Stop", &dashboard_window);
@@ -1206,6 +1208,9 @@ int main(int argc, char** argv) {
     settings_button.setStyleSheet(
         "QPushButton{background:#1f5c97;color:#ffffff;border:1px solid #97c0e6;border-radius:6px;padding:6px 12px;font-weight:600;}"
         "QPushButton:hover{background:#2f74b5;}");
+    operation_guide_button.setStyleSheet(
+        "QPushButton{background:#146b8c;color:#ffffff;border:1px solid #85d0ea;border-radius:6px;padding:6px 12px;font-weight:600;}"
+        "QPushButton:hover{background:#1b84ad;}");
     path_mode_button.setStyleSheet(
         "QPushButton{background:#5a3f78;color:#ffffff;border:1px solid #b79ad9;border-radius:6px;padding:6px 12px;font-weight:600;}"
         "QPushButton:hover{background:#6f5292;}");
@@ -1217,6 +1222,7 @@ int main(int argc, char** argv) {
         "QPushButton:hover{background:#964040;}");
     top_bar->addWidget(&sonar_dock_button, 0, Qt::AlignRight);
     top_bar->addWidget(&scene_editor_button, 0, Qt::AlignRight);
+    top_bar->addWidget(&operation_guide_button, 0, Qt::AlignRight);
     top_bar->addWidget(&path_mode_button, 0, Qt::AlignRight);
     top_bar->addWidget(&path_start_button, 0, Qt::AlignRight);
     top_bar->addWidget(&path_stop_button, 0, Qt::AlignRight);
@@ -1379,6 +1385,7 @@ int main(int argc, char** argv) {
         scene_editor->setPauseSonarCallback([&](bool on) { scene_edit_pauses_sonar.store(on); });
     }
     scene_editor_dialog_layout->addWidget(scene_editor);
+    auto* operation_guide_dialog = new standalone_mvp::OperationGuideDialog(&dashboard_window);
     QObject::connect(path_editor, &standalone_mvp::PathEditorPanel::pathEdited, [&](const standalone_mvp::PathModeConfig& cfg) {
         app_cfg.path_mode = cfg;
     });
@@ -1524,6 +1531,8 @@ int main(int argc, char** argv) {
     settings_button.setDefault(false);
     scene_editor_button.setAutoDefault(false);
     scene_editor_button.setDefault(false);
+    operation_guide_button.setAutoDefault(false);
+    operation_guide_button.setDefault(false);
     path_mode_button.setAutoDefault(false);
     path_mode_button.setDefault(false);
     path_start_button.setAutoDefault(false);
@@ -1536,6 +1545,15 @@ int main(int argc, char** argv) {
             scene_editor_dialog->show();
             scene_editor_dialog->raise();
             scene_editor_dialog->activateWindow();
+        }, Qt::QueuedConnection);
+    });
+    QObject::connect(&operation_guide_button, &QPushButton::pressed, [operation_guide_dialog]() {
+        QMetaObject::invokeMethod(operation_guide_dialog, [operation_guide_dialog]() {
+            operation_guide_dialog->setWindowState(
+                (operation_guide_dialog->windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
+            operation_guide_dialog->show();
+            operation_guide_dialog->raise();
+            operation_guide_dialog->activateWindow();
         }, Qt::QueuedConnection);
     });
     bool path_mode_enabled_ui = false;

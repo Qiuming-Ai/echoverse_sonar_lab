@@ -208,6 +208,7 @@ if(USE_REAL_SONAR_CORE)
         src/SceneEditorPanel.cpp
         src/PathEditorPanel.cpp
         src/PathFollower.cpp
+        src/ui/OperationGuideDialog.cpp
         src/echoverse_sonar_lab.cpp
         src/ui/DockWorkspace.cpp
         src/ui/DraggableTabBar.cpp

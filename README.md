@@ -5,13 +5,14 @@ It provides:
 
 - GUI application (`multibeam_gui`) for scene editing and sonar visualization
 - Launcher (`esl_launcher`) for startup and configuration
-- TCP point cloud streaming and `.esl3d` binary recording workflow
+- Unified output sessions for TCP streaming and `.esl2d` / `.esl3d` recording
 
 ## Features
 
 - Configurable sonar simulation (FLS / MBES / SSS related modules)
-- Point cloud TCP streaming protocol
-- `.esl3d` packet-based binary storage format
+- Session-scoped output management (per-module output directories + summary JSON)
+- TCP streaming protocol for ESL2D/ESL3D packets
+- `.esl2d` and `.esl3d` packet-based binary storage formats
 - Optional "green package" ZIP output for runtime distribution
 
 ## Repository Layout
@@ -76,12 +77,24 @@ Do not run `echoverse_sonar_lab.exe` directly; it requires `--from-esl-launcher`
 
 `USE_REAL_SONAR_CORE` is always enabled in this repository and is no longer configurable.
 
+## Output Session Layout
+
+When at least one module enables TCP output or file recording, the app creates a new output session under:
+
+- `Sonar Data/<yyyyMMdd_HHmmss>/` (project-local root)
+- `Sonar Data/<timestamp>/<module_name>/2d.esl2d` (if ESL2D output enabled)
+- `Sonar Data/<timestamp>/<module_name>/3d.esl3d` (if point-cloud output enabled)
+- `Sonar Data/<timestamp>/<module_name>/Waveform Data/` (offline post-process output, when ESL3D file output enabled)
+- `Sonar Data/<timestamp>/recording_summary.json` (session summary: duration, per-module frame counts, config snapshots)
+
 ## Documentation
 
 - TCP protocol: `docs/sonar_tcp_protocol.md`
-- ESL3D format: `docs/esl3d_file_format.md`
+- ESL2D format: `docs/sonar_esl2d_data_spec.md`
+- ESL3D format: `docs/sonar_esl3d_data_spec.md`
 - H5 data spec: `docs/sonar_h5_data_spec.md`
 - Model loading and custom assets: `docs/model_loading_and_custom_assets.md`
+- Output session and recording summary: `docs/output_session_layout.md`
 
 ## License
 

@@ -21,7 +21,7 @@ flowchart TD
     A[Startup and Project Management\nesl_launcher / AppConfig / Settings] --> B[Scene and Camera Layer\nSharedScene / CameraModule / SceneEditor]
     B --> C[Acoustic Simulation Core\nsonar_core + sonar_imaging]
     C --> D[Display and Interaction Layer\nsonar_ui + Qt/OSG Panels]
-    C --> E[Point Cloud and Recording Layer\nPointCloudSimulation + TCP + ESL3D]
+    C --> E[Point Cloud and Recording Layer\nOutputController + TCP Hub + ESL2D/ESL3D]
     E --> F[Protocol and Spec Layer\ndocs/*_spec + TCP protocol]
     E --> G[Offline Processing Layer\nmatlab_point2file2image]
     H[Type and Compatibility Layer\nsonar_types_v2 + frame_helper] -.Cross-layer support.-> B
@@ -81,8 +81,10 @@ This layer is not just visualization; it is the human-in-the-loop parameter-tuni
 This layer converts internal simulation outputs into exchangeable data assets:
 
 - The point-cloud simulation subsystem outputs polar images and 3D point sets, while preserving sampling budget and configuration snapshots.
-- The real-time interface publishes continuously using a TCP frame protocol.
-- The file interface records data using appendable binary `.esl3d` format.
+- `OutputController` manages session lifecycle and creates project-local timestamped session roots under `Sonar Data/<timestamp>/`.
+- `SonarTcpHub` centralizes TCP listeners per port and multiplexes packet delivery for active modules.
+- The file interface records appendable binary `.esl2d` and `.esl3d` streams, organized per module.
+- Session stop writes `recording_summary.json` with per-module frame counts and configuration snapshots.
 - Protocol and data-spec documents form machine-readable contracts for cross-process and cross-language consumption.
 
 This layer evolves the system from a closed-loop simulator into an integrable data-service node.

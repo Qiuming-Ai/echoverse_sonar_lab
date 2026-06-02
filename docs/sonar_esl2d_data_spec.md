@@ -6,14 +6,14 @@ This document defines the on-disk binary format of `.esl2d` files produced by Ec
 
 An `.esl2d` file stores **beam-organized intensity profiles** (range bins per beam). It supports:
 
-| `sonar_type` | Value | Typical beams | Bearing layout |
-|---|---:|---|---|
-| FLS | `0` | e.g. 256 | Uniform fan from `-beam_width/2` to `+beam_width/2` (e.g. ±65° when beam width is 130°) |
-| SSS | `1` | 2 | Starboard `0°`, Port `180°` |
+| `sonar_type` | Value | Typical source | Typical beams | Bearing layout |
+|---|---:|---|---|---|
+| FLS-compatible | `0` | FLS and current MBES ESL2D writer | e.g. 256 | Uniform fan from `-beam_width/2` to `+beam_width/2` (e.g. ±65° when beam width is 130°) |
+| SSS | `1` | SSS | 2 | Starboard `0°`, Port `180°` |
 
 Each packet is one **frame** (one ping cycle). Data are stored **per beam**: for each beam, intensity samples cover detection range `0 … max_range_m`.
 
-MBES may reuse the same container in future versions (`sonar_type = 2` reserved).
+Current MBES ESL2D output reuses the FLS-compatible encoding (`sonar_type = 0`).
 
 ## Endianness
 
@@ -91,13 +91,14 @@ Exact two-way-time mapping is available in metadata (`bin_duration_s`, `speed_of
 
 ## Sonar-Type Semantics
 
-### FLS (`sonar_type = 0`)
+### FLS-compatible (`sonar_type = 0`)
 
 Example: 256 beams, ±65° coverage, 750 bins, `max_range_m = 30`.
 
 - `beam_count = 256`
 - `beam_angles_deg[i]` spans approximately `[-65°, +65°]` uniformly
 - Each beam stores `bin_count` intensity samples along range `0 … max_range_m`
+- MBES ESL2D output currently uses the same encoding and metadata `sonar_kind = "fls"`.
 
 ### SSS (`sonar_type = 1`)
 
@@ -116,7 +117,7 @@ Current writer includes:
 - `byte_order`: `"little_endian"`
 - `layout`: `"beam_major"`
 - `data_order`: `"metadata_then_beam_angles_then_intensity"`
-- `sonar_kind`: `"fls"` or `"sss"`
+- `sonar_kind`: `"fls"` or `"sss"` (`"fls"` currently covers FLS and MBES ESL2D outputs)
 - `sonar_module_name`: human-readable module label
 - `frame` object:
   - `seq`, `timestamp_us`
