@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PointCloudSonarSimulation.hpp"
+#include "SonarTcpHub.hpp"
 
 #include <QHostAddress>
 #include <QPointer>
@@ -26,9 +27,13 @@ public:
     PointCloudTcpStreamer();
     ~PointCloudTcpStreamer();
 
+    void setTcpHub(SonarTcpHub* hub);
+    void setSessionActive(bool active) { session_active_ = active; }
     void applyConfig(bool enabled, const std::string& host, std::uint16_t port, bool file_output_enabled, const std::string& file_output_path);
     void stop();
     void sendFrame(const PointCloudFrame& frame);
+    std::uint64_t framesWritten() const { return seq_; }
+    void resetFrameCount() { seq_ = 0; }
 
     PointCloudTcpRuntimeStatus status() const;
 
@@ -41,6 +46,8 @@ private:
 
     bool enabled_ = false;
     bool file_output_enabled_ = false;
+    bool session_active_ = false;
+    SonarTcpHub* tcp_hub_ = nullptr;
     std::string host_ = "0.0.0.0";
     std::string file_output_path_;
     std::uint16_t port_ = 30001;

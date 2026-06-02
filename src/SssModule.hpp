@@ -3,6 +3,8 @@
 #include "AppConfig.hpp"
 #include "Esl2dFileWriter.hpp"
 #include "CameraModule.hpp"
+#include "SonarOutputUtil.hpp"
+#include "SonarTcpHub.hpp"
 
 #include <Eigen/Geometry>
 #include <osg/Group>
@@ -32,7 +34,10 @@ public:
     void setupStripWidget(QWidget* parent_widget);
     void connectStripSignals();
     void initEsl2dRecording(const QString& project_dir);
-    void applyEsl2dOutputRuntime();
+    void beginOutputSession(standalone_mvp::SonarTcpHub* hub, const standalone_mvp::ModuleOutputSession& session);
+    void endOutputSession();
+    standalone_mvp::ModuleRecordingStats collectRecordingStats() const;
+    bool outputSessionActive() const { return !output_session_.module_dir.isEmpty(); }
     int updateStride() const;
     void tickFromCameraRuntimes(const std::vector<SubCameraRuntime>& sub_cameras,
                                 const standalone_mvp::EnvironmentConfig& env_cfg,
@@ -45,6 +50,7 @@ public:
     QPointer<SideScanControlPanel> strip_widget;
     standalone_mvp::Esl2dFileWriter esl2d_file_writer_;
     QString esl2d_project_dir_;
+    standalone_mvp::ModuleOutputSession output_session_;
     float runtime_range_m = 0.0f;
     float runtime_gain = 0.0f;
     standalone_mvp::SonarModuleConfig module_cfg;

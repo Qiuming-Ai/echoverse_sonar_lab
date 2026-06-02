@@ -1,4 +1,5 @@
 #include "Esl2dFileWriter.hpp"
+#include "SonarTcpHub.hpp"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -63,10 +64,14 @@ QString buildEsl2dOutputPath(const QString& project_dir, const QString& sonar_na
     return QDir(out_dir).filePath(QString("%1_%2_%3.esl2d").arg(safe_name, kind_suffix, date));
 }
 
-Esl2dFileWriter::Esl2dFileWriter() : tcp_server_(std::make_unique<QTcpServer>()) {}
+Esl2dFileWriter::Esl2dFileWriter() = default;
 
 Esl2dFileWriter::~Esl2dFileWriter() {
     close();
+}
+
+void Esl2dFileWriter::setTcpHub(SonarTcpHub* hub) {
+    tcp_hub_ = hub;
 }
 
 void Esl2dFileWriter::applyConfig(const bool tcp_output_enabled,
@@ -118,7 +123,10 @@ void Esl2dFileWriter::dropTcpClient() {
 }
 
 void Esl2dFileWriter::refreshTcpServer() {
-    if (!tcp_output_enabled_) {
+    if (tcp_hub_) {
+        return;
+    }
+    if (!tcp_output_enabled_ || !session_active_) {
         dropTcpClient();
         if (tcp_server_) {
             tcp_server_->close();
@@ -145,7 +153,18 @@ void Esl2dFileWriter::refreshTcpServer() {
 }
 
 bool Esl2dFileWriter::writeTcpAll(const QByteArray& data) {
-    if (!tcp_output_enabled_ || !tcp_server_ || !tcp_server_->isListening()) {
+    if (!tcp_output_enabled_ || !session_active_) {
+        return false;
+    }
+    if (tcp_hub_) {
+        if (tcp_hub_->send(tcp_port_, data)) {
+            consecutive_tcp_write_failures_ = 0;
+            return true;
+        }
+        ++consecutive_tcp_write_failures_;
+        return false;
+    }
+    if (!tcp_server_ || !tcp_server_->isListening()) {
         return false;
     }
     while (tcp_server_->hasPendingConnections()) {
@@ -180,7 +199,7 @@ bool Esl2dFileWriter::writeTcpAll(const QByteArray& data) {
 }
 
 void Esl2dFileWriter::refreshFileOutput() {
-    if (!file_output_enabled_ || file_output_path_.empty()) {
+    if (!file_output_enabled_ || !session_active_ || file_output_path_.empty()) {
         if (file_output_) {
             file_output_->close();
             file_output_.reset();

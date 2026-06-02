@@ -52,12 +52,14 @@ double computePitchDeg(const Eigen::Vector3d& forward) {
 
 } // namespace
 
-PointCloudTcpStreamer::PointCloudTcpStreamer()
-    : server_(std::make_unique<QTcpServer>()) {
-}
+PointCloudTcpStreamer::PointCloudTcpStreamer() = default;
 
 PointCloudTcpStreamer::~PointCloudTcpStreamer() {
     stop();
+}
+
+void PointCloudTcpStreamer::setTcpHub(SonarTcpHub* hub) {
+    tcp_hub_ = hub;
 }
 
 void PointCloudTcpStreamer::dropClient() {
@@ -108,6 +110,11 @@ void PointCloudTcpStreamer::applyConfig(
         stop();
         return;
     }
+    if (tcp_hub_) {
+        refreshFileOutput();
+        status_.running = enabled_ && session_active_;
+        return;
+    }
     if (!enabled_) {
         dropClient();
         if (server_) {
@@ -149,7 +156,7 @@ void PointCloudTcpStreamer::stop() {
 }
 
 void PointCloudTcpStreamer::refreshFileOutput() {
-    if (!file_output_enabled_ || file_output_path_.empty()) {
+    if (!file_output_enabled_ || !session_active_ || file_output_path_.empty()) {
         if (file_output_) {
             file_output_->close();
             file_output_.reset();
@@ -325,10 +332,12 @@ QByteArray PointCloudTcpStreamer::buildPacket(const PointCloudFrame& frame, std:
 }
 
 void PointCloudTcpStreamer::sendFrame(const PointCloudFrame& frame) {
-    refreshConnection();
+    if (!session_active_) {
+        return;
+    }
     const std::uint64_t seq = ++seq_;
     const QByteArray packet = buildPacket(frame, seq);
-    if (file_output_) {
+    if (file_output_ && file_output_enabled_) {
         const qint64 n = file_output_->write(packet);
         if (n != packet.size()) {
             std::cout << "[tcp_dbg] file output write failed path=" << file_output_->fileName().toStdString() << std::endl;
@@ -338,7 +347,20 @@ void PointCloudTcpStreamer::sendFrame(const PointCloudFrame& frame) {
             file_output_->flush();
         }
     }
-    if (!enabled_ || !status_.running || !status_.client_connected) {
+    if (!enabled_) {
+        return;
+    }
+    if (tcp_hub_) {
+        if (tcp_hub_->send(port_, packet)) {
+            status_.last_sent_seq = seq;
+            status_.last_payload_bytes = static_cast<std::size_t>(packet.size());
+            status_.running = true;
+            status_.client_connected = true;
+        }
+        return;
+    }
+    refreshConnection();
+    if (!status_.running || !status_.client_connected) {
         return;
     }
     if (!writeAll(packet)) {

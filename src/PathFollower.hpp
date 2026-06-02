@@ -26,6 +26,10 @@ private:
     Eigen::Vector3d waypointToWorld(const PathWaypointConfig& wp) const;
     bool advanceToNextSegment();
     void writeCurrentPose(PathFollowerPose* out_pose) const;
+    std::size_t segmentCount() const;
+    Eigen::Vector3d segmentStart(std::size_t segment_index) const;
+    Eigen::Vector3d segmentEnd(std::size_t segment_index) const;
+    double segmentSpeedMps(std::size_t segment_index) const;
 
     std::vector<PathWaypointConfig> waypoints_;
     bool loop_ = false;

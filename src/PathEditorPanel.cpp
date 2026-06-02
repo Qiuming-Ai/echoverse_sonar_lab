@@ -60,6 +60,11 @@ public:
         update();
     }
 
+    void setLoopPath(bool loop) {
+        loop_path_ = loop;
+        update();
+    }
+
     void setWaypointRenderingEnabled(bool enabled) {
         draw_waypoints_ = enabled;
         update();
@@ -115,6 +120,15 @@ protected:
             for (std::size_t i = 1; i < waypoints_.size(); ++i) {
                 const QPointF a = worldToWidget(QPointF(waypoints_[i - 1].x, waypoints_[i - 1].y));
                 const QPointF b = worldToWidget(QPointF(waypoints_[i].x, waypoints_[i].y));
+                p.drawLine(a, b);
+            }
+            if (loop_path_ && waypoints_.size() >= 2) {
+                const QPointF a = worldToWidget(QPointF(waypoints_.back().x, waypoints_.back().y));
+                const QPointF b = worldToWidget(QPointF(waypoints_.front().x, waypoints_.front().y));
+                QPen loop_pen(QColor(255, 210, 80, 180));
+                loop_pen.setWidth(2);
+                loop_pen.setStyle(Qt::DashLine);
+                p.setPen(loop_pen);
                 p.drawLine(a, b);
             }
 
@@ -559,6 +573,7 @@ private:
     sonar_imaging::TopDownDepthMapResult map_;
     std::vector<PathWaypointConfig> waypoints_;
     bool draw_waypoints_ = true;
+    bool loop_path_ = false;
     bool allow_double_click_pick_ = false;
     bool add_mode_ = true;
     bool edit_mode_ = false;
@@ -722,6 +737,9 @@ PathEditorPanel::PathEditorPanel(QWidget* parent)
     });
     QObject::connect(loop_check_, &QCheckBox::toggled, this, [this](bool on) {
         cfg_.loop = on;
+        if (map_canvas_) {
+            map_canvas_->setLoopPath(on);
+        }
         emit pathEdited(cfg_);
     });
     QObject::connect(add_mode_check_, &QCheckBox::toggled, this, [this](bool on) {
@@ -983,6 +1001,7 @@ void PathEditorPanel::syncConfigFromTable() {
 
 void PathEditorPanel::updateCanvasWaypoints() {
     map_canvas_->setWaypoints(cfg_.waypoints);
+    map_canvas_->setLoopPath(cfg_.loop);
 }
 
 void PathEditorPanel::setInteractionModeUi(bool add_mode, bool edit_mode) {

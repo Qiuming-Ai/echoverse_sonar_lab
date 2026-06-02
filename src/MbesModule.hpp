@@ -4,6 +4,8 @@
 #include "Esl2dFileWriter.hpp"
 #include "PointCloudSonarSimulation.hpp"
 #include "PointCloudTcpStreamer.hpp"
+#include "SonarOutputUtil.hpp"
+#include "SonarTcpHub.hpp"
 
 #include <Eigen/Geometry>
 
@@ -55,7 +57,10 @@ public:
     void setupWidget(DockWorkspace* workspace, const QString& title);
     void connectWidgetSignals();
     void initEsl2dRecording(const QString& project_dir);
-    void applyEsl2dOutputRuntime();
+    void beginOutputSession(standalone_mvp::SonarTcpHub* hub, const standalone_mvp::ModuleOutputSession& session);
+    void endOutputSession();
+    standalone_mvp::ModuleRecordingStats collectRecordingStats() const;
+    bool outputSessionActive() const { return !output_session_.module_dir.isEmpty(); }
     bool tick(const Eigen::Affine3d& pose,
               int frame_index,
               int image_update_stride,
@@ -71,6 +76,7 @@ public:
     QString point_cloud_project_dir_;
     QString esl2d_project_dir_;
     QString point_cloud_sonar_json_path_;
+    standalone_mvp::ModuleOutputSession output_session_;
     float runtime_range_m = 0.0f;
     float runtime_gain = 0.0f;
     bool pending_range_update = false;

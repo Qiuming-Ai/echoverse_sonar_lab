@@ -43,18 +43,24 @@ struct Esl2dWriteParams {
     QString sonar_module_name;
 };
 
+class SonarTcpHub;
+
 class Esl2dFileWriter {
 public:
     Esl2dFileWriter();
     ~Esl2dFileWriter();
 
+    void setTcpHub(SonarTcpHub* hub);
     void applyConfig(bool tcp_output_enabled,
                      const std::string& tcp_host,
                      std::uint16_t tcp_port,
                      bool file_output_enabled,
                      const std::string& file_output_path);
     void close();
-    bool outputEnabled() const { return tcp_output_enabled_ || file_output_enabled_; }
+    bool outputEnabled() const { return session_active_ && (tcp_output_enabled_ || file_output_enabled_); }
+    void setSessionActive(bool active) { session_active_ = active; }
+    std::uint64_t framesWritten() const { return seq_; }
+    void resetFrameCount() { seq_ = 0; }
 
     bool writeFlsFrame(const sonar_types_v2::samples::Sonar& sample, const Esl2dWriteParams& params);
     bool writeSssFrame(const sonar_types_v2::samples::Sonar& starboard,
@@ -87,6 +93,8 @@ private:
 
     bool tcp_output_enabled_ = false;
     bool file_output_enabled_ = false;
+    bool session_active_ = false;
+    SonarTcpHub* tcp_hub_ = nullptr;
     std::string tcp_host_ = "0.0.0.0";
     std::uint16_t tcp_port_ = 30001;
     std::string file_output_path_;

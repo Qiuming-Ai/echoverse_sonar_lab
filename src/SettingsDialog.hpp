@@ -29,6 +29,7 @@ private:
     void refreshWorldList();
     void refreshSonarTable();
     void refreshSonarTypeRow(int row);
+    void refreshOutputTables();
     void openSonarConfigDialog(int row);
 
     QComboBox* world_;
@@ -132,6 +133,9 @@ private:
     QDialog* fls_dialog_;
     QDialog* mbes_dialog_;
     QDialog* side_scan_dialog_;
+
+    QTableWidget* file_output_table_;
+    QTableWidget* tcp_output_table_;
 
     QLabel* restart_hint_;
     QPushButton* apply_button_;

@@ -15,6 +15,8 @@
 #include "SceneEditorPanel.hpp"
 #include "PathEditorPanel.hpp"
 #include "PathFollower.hpp"
+#include "OutputController.hpp"
+#include "SonarOutputUtil.hpp"
 
 #include <QApplication>
 #include <QEventLoop>
@@ -31,6 +33,7 @@
 #include <QMessageBox>
 #include <QPixmap>
 #include <QProcess>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QObject>
 #include <QString>
@@ -80,6 +83,7 @@
 #include <limits>
 #include <mutex>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -1134,6 +1138,25 @@ int main(int argc, char** argv) {
     root_layout->setContentsMargins(10, 10, 10, 10);
     root_layout->setSpacing(8);
     auto* top_bar = new QHBoxLayout();
+    auto* record_file_indicator = new QLabel(QStringLiteral("● FILE"), &dashboard_window);
+    auto* record_tcp_indicator = new QLabel(QStringLiteral("● TCP"), &dashboard_window);
+    auto* record_duration_label = new QLabel(QStringLiteral("00:00:00"), &dashboard_window);
+    const auto idle_record_style = QStringLiteral("color:#5a6470;font-weight:600;font-size:12px;padding:2px 6px;");
+    const auto active_file_style = QStringLiteral("color:#3ecf6e;font-weight:700;font-size:12px;padding:2px 6px;");
+    const auto active_tcp_style = QStringLiteral("color:#57b7ff;font-weight:700;font-size:12px;padding:2px 6px;");
+    record_file_indicator->setStyleSheet(idle_record_style);
+    record_tcp_indicator->setStyleSheet(idle_record_style);
+    record_duration_label->setStyleSheet(QStringLiteral("color:#dcefff;font-weight:600;font-size:12px;padding:2px 8px;"));
+    QPushButton info_drawer_toggle_button(QStringLiteral("Show Info"), &dashboard_window);
+    info_drawer_toggle_button.setAutoDefault(false);
+    info_drawer_toggle_button.setDefault(false);
+    info_drawer_toggle_button.setStyleSheet(
+        "QPushButton{background:#1f5c97;color:#ffffff;border:1px solid #97c0e6;border-radius:6px;padding:6px 12px;font-weight:600;}"
+        "QPushButton:hover{background:#2f74b5;}");
+    top_bar->addWidget(&info_drawer_toggle_button, 0, Qt::AlignLeft);
+    top_bar->addWidget(record_file_indicator, 0, Qt::AlignLeft);
+    top_bar->addWidget(record_tcp_indicator, 0, Qt::AlignLeft);
+    top_bar->addWidget(record_duration_label, 0, Qt::AlignLeft);
     top_bar->addStretch();
     QPushButton sonar_dock_button("Show Sonar", &dashboard_window);
     QPushButton settings_button("Settings", &dashboard_window);
@@ -1285,20 +1308,14 @@ int main(int argc, char** argv) {
     info_panel->setVisible(info_drawer_visible);
     info_panel->setStyleSheet(
         "QWidget{background:#000000;border:1px solid #6ea2d4;}");
-    QPushButton info_drawer_toggle_button("Show Info", &dashboard_window);
-    info_drawer_toggle_button.setAutoDefault(false);
-    info_drawer_toggle_button.setDefault(false);
-    info_drawer_toggle_button.setStyleSheet(
-        "QPushButton{background:#1f5c97;color:#ffffff;border:1px solid #97c0e6;border-radius:6px;padding:6px 12px;font-weight:600;}"
-        "QPushButton:hover{background:#2f74b5;}");
     QObject::connect(&info_drawer_toggle_button, &QPushButton::clicked, [&]() {
         info_drawer_visible = !info_drawer_visible;
         info_panel->setVisible(info_drawer_visible);
-        info_drawer_toggle_button.setText(info_drawer_visible ? "Hide Info" : "Show Info");
+        info_drawer_toggle_button.setText(info_drawer_visible ? QStringLiteral("Hide Info")
+                                                              : QStringLiteral("Show Info"));
         if (info_drawer_visible) {
             info_panel->raise();
         }
-        info_drawer_toggle_button.raise();
     });
 
     auto* viewer_frame = new QFrame(&dashboard_window);
@@ -1427,7 +1444,6 @@ int main(int argc, char** argv) {
     }
 
     auto update_viewport_layout = [&]() {
-        info_drawer_toggle_button.move(kInfoDrawerMargin, kInfoDrawerMargin);
         if (info_panel) {
             const int drawer_h = std::max(
                 120, dashboard_window.height() - kInfoDrawerTop - kInfoDrawerBottom);
@@ -1438,7 +1454,6 @@ int main(int argc, char** argv) {
                 info_panel->raise();
             }
         }
-        info_drawer_toggle_button.raise();
         const QRect area = viewer_frame->contentsRect().adjusted(8, 8, -8, -8);
         if (area.width() <= 0 || area.height() <= 0) {
             return;
@@ -1499,11 +1514,123 @@ int main(int argc, char** argv) {
         }, Qt::QueuedConnection);
     });
     bool path_mode_enabled_ui = false;
+    bool output_session_running = false;
+    std::chrono::steady_clock::time_point output_session_start_time{};
+    standalone_mvp::OutputController output_controller;
+    QTimer record_duration_timer(&dashboard_window);
+    record_duration_timer.setInterval(500);
+    auto format_record_duration = [](const std::chrono::steady_clock::duration& elapsed) {
+        const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+        const int total_sec = static_cast<int>(total_ms / 1000);
+        const int hours = total_sec / 3600;
+        const int minutes = (total_sec % 3600) / 60;
+        const int seconds = total_sec % 60;
+        return QStringLiteral("%1:%2:%3")
+            .arg(hours, 2, 10, QChar('0'))
+            .arg(minutes, 2, 10, QChar('0'))
+            .arg(seconds, 2, 10, QChar('0'));
+    };
+    auto collect_runtime_module_configs = [&]() {
+        std::vector<standalone_mvp::SonarModuleConfig> modules;
+        modules.push_back(fls_module.module_cfg);
+        for (const auto& extra : extra_fls_modules_rt) {
+            modules.push_back(extra->module_cfg);
+        }
+        modules.push_back(mbes_module.module_cfg);
+        for (const auto& extra : extra_mbes_modules_rt) {
+            modules.push_back(extra->module_cfg);
+        }
+        modules.push_back(sss_module.module_cfg);
+        for (const auto& extra : extra_sss_modules_rt) {
+            modules.push_back(extra->module_cfg);
+        }
+        return modules;
+    };
+    auto session_has_file_output = [&](const std::vector<standalone_mvp::SonarModuleConfig>& modules) {
+        for (const auto& mod : modules) {
+            if (!mod.enabled) {
+                continue;
+            }
+            switch (mod.type) {
+            case standalone_mvp::SonarModuleType::FLS:
+                if (mod.fls_config.file_output_enabled) {
+                    return true;
+                }
+                if (mod.point_cloud_config.enabled && mod.point_cloud_config.file_output_enabled) {
+                    return true;
+                }
+                break;
+            case standalone_mvp::SonarModuleType::MBES:
+                if (mod.mbes_config.file_output_enabled) {
+                    return true;
+                }
+                if (mod.point_cloud_config.enabled && mod.point_cloud_config.file_output_enabled) {
+                    return true;
+                }
+                break;
+            case standalone_mvp::SonarModuleType::SSS:
+                if (mod.sss_config.file_output_enabled) {
+                    return true;
+                }
+                break;
+            }
+        }
+        return false;
+    };
+    auto session_has_tcp_output = [&](const std::vector<standalone_mvp::SonarModuleConfig>& modules) {
+        for (const auto& mod : modules) {
+            if (!mod.enabled) {
+                continue;
+            }
+            switch (mod.type) {
+            case standalone_mvp::SonarModuleType::FLS:
+                if (mod.fls_config.tcp_output_enabled) {
+                    return true;
+                }
+                if (mod.point_cloud_config.enabled && mod.point_cloud_config.tcp_output_enabled) {
+                    return true;
+                }
+                break;
+            case standalone_mvp::SonarModuleType::MBES:
+                if (mod.mbes_config.tcp_output_enabled) {
+                    return true;
+                }
+                if (mod.point_cloud_config.enabled && mod.point_cloud_config.tcp_output_enabled) {
+                    return true;
+                }
+                break;
+            case standalone_mvp::SonarModuleType::SSS:
+                if (mod.sss_config.tcp_output_enabled) {
+                    return true;
+                }
+                break;
+            }
+        }
+        return false;
+    };
+    auto update_recording_indicators = [&](const std::vector<standalone_mvp::SonarModuleConfig>& modules) {
+        const bool file_on = output_session_running && session_has_file_output(modules);
+        const bool tcp_on = output_session_running && session_has_tcp_output(modules);
+        record_file_indicator->setStyleSheet(file_on ? active_file_style : idle_record_style);
+        record_tcp_indicator->setStyleSheet(tcp_on ? active_tcp_style : idle_record_style);
+        if (!output_session_running) {
+            record_duration_label->setText(QStringLiteral("00:00:00"));
+        }
+    };
     auto refresh_path_run_buttons = [&]() {
-        path_start_button.setEnabled(path_mode_enabled_ui);
-        path_stop_button.setEnabled(path_mode_enabled_ui);
+        path_start_button.setText(output_session_running ? QStringLiteral("Restart") : QStringLiteral("Start"));
+        path_start_button.setEnabled(true);
+        path_stop_button.setEnabled(output_session_running);
+        update_recording_indicators(collect_runtime_module_configs());
     };
     refresh_path_run_buttons();
+    QObject::connect(&record_duration_timer, &QTimer::timeout, [&]() {
+        if (!output_session_running) {
+            return;
+        }
+        const auto elapsed = std::chrono::steady_clock::now() - output_session_start_time;
+        record_duration_label->setText(format_record_duration(elapsed));
+    });
     QObject::connect(&path_mode_button, &QPushButton::pressed, [&]() {
         path_mode_enabled_ui = !path_mode_enabled_ui;
         path_editor->setCompactLiveMapMode(!path_mode_enabled_ui);
@@ -1514,10 +1641,133 @@ int main(int argc, char** argv) {
         }
         refresh_path_run_buttons();
     });
-    QObject::connect(&path_start_button, &QPushButton::clicked, [&]() {
-        if (!path_mode_enabled_ui) {
+    auto build_output_session = [&](const standalone_mvp::SonarModuleConfig& cfg)
+        -> std::optional<standalone_mvp::ModuleOutputSession> {
+        bool esl2d_on = false;
+        bool pc_on = false;
+        switch (cfg.type) {
+        case standalone_mvp::SonarModuleType::FLS:
+            esl2d_on = cfg.fls_config.file_output_enabled || cfg.fls_config.tcp_output_enabled;
+            pc_on = cfg.point_cloud_config.enabled &&
+                    (cfg.point_cloud_config.file_output_enabled || cfg.point_cloud_config.tcp_output_enabled);
+            break;
+        case standalone_mvp::SonarModuleType::MBES:
+            esl2d_on = cfg.mbes_config.file_output_enabled || cfg.mbes_config.tcp_output_enabled;
+            pc_on = cfg.point_cloud_config.enabled &&
+                    (cfg.point_cloud_config.file_output_enabled || cfg.point_cloud_config.tcp_output_enabled);
+            break;
+        case standalone_mvp::SonarModuleType::SSS:
+            esl2d_on = cfg.sss_config.file_output_enabled || cfg.sss_config.tcp_output_enabled;
+            break;
+        }
+        if (!esl2d_on && !pc_on) {
+            return std::nullopt;
+        }
+        standalone_mvp::ModuleOutputSession session;
+        session.module_dir = standalone_mvp::buildModuleOutputDir(output_controller.sessionRoot(), cfg.name);
+        if (esl2d_on) {
+            session.esl2d_path = QDir(session.module_dir).filePath(QStringLiteral("2d.esl2d"));
+        }
+        if (pc_on) {
+            session.esl3d_path = QDir(session.module_dir).filePath(QStringLiteral("3d.esl3d"));
+            session.waveform_dir = standalone_mvp::buildModuleWaveformDir(session.module_dir);
+        }
+        return session;
+    };
+    auto start_module_output_if_needed = [&](auto& module) {
+        if (!module.module_cfg.enabled) {
             return;
         }
+        const auto session = build_output_session(module.module_cfg);
+        if (!session.has_value()) {
+            return;
+        }
+        module.beginOutputSession(&output_controller.tcpHub(), *session);
+    };
+    auto start_all_output_sessions = [&]() -> bool {
+        const std::vector<standalone_mvp::SonarModuleConfig> modules_for_tcp = collect_runtime_module_configs();
+        if (!standalone_mvp::anyModuleOutputEnabled(modules_for_tcp)) {
+            return false;
+        }
+        output_controller.startSession(project_dir, modules_for_tcp);
+        start_module_output_if_needed(fls_module);
+        for (auto& extra : extra_fls_modules_rt) {
+            start_module_output_if_needed(*extra);
+        }
+        start_module_output_if_needed(mbes_module);
+        for (auto& extra : extra_mbes_modules_rt) {
+            start_module_output_if_needed(*extra);
+        }
+        start_module_output_if_needed(sss_module);
+        for (auto& extra : extra_sss_modules_rt) {
+            start_module_output_if_needed(*extra);
+        }
+        output_session_running = true;
+        output_session_start_time = std::chrono::steady_clock::now();
+        record_duration_timer.start();
+        refresh_path_run_buttons();
+        std::cout << "[output] session started root=" << output_controller.sessionRoot().toStdString() << std::endl;
+        return true;
+    };
+    auto collect_all_recording_stats = [&]() {
+        std::vector<standalone_mvp::ModuleRecordingStats> stats;
+        auto maybe_push = [&](const auto& module) {
+            if (!module.outputSessionActive()) {
+                return;
+            }
+            stats.push_back(module.collectRecordingStats());
+        };
+        maybe_push(fls_module);
+        for (const auto& extra : extra_fls_modules_rt) {
+            maybe_push(*extra);
+        }
+        maybe_push(mbes_module);
+        for (const auto& extra : extra_mbes_modules_rt) {
+            maybe_push(*extra);
+        }
+        maybe_push(sss_module);
+        for (const auto& extra : extra_sss_modules_rt) {
+            maybe_push(*extra);
+        }
+        return stats;
+    };
+    auto stop_all_output_sessions = [&]() {
+        if (!output_session_running) {
+            return;
+        }
+        record_duration_timer.stop();
+        const auto elapsed = std::chrono::steady_clock::now() - output_session_start_time;
+        const double duration_seconds =
+            std::chrono::duration_cast<std::chrono::duration<double>>(elapsed).count();
+        const QString session_root = output_controller.sessionRoot();
+        const std::vector<standalone_mvp::SonarModuleConfig> modules_for_flags = collect_runtime_module_configs();
+        const auto stats = collect_all_recording_stats();
+        standalone_mvp::SessionRecordingSummaryInput summary;
+        summary.session_root = session_root;
+        summary.duration_seconds = duration_seconds;
+        summary.file_output_active = session_has_file_output(modules_for_flags);
+        summary.tcp_output_active = session_has_tcp_output(modules_for_flags);
+        summary.modules = stats;
+        standalone_mvp::writeSessionRecordingSummary(summary);
+
+        fls_module.endOutputSession();
+        for (auto& extra : extra_fls_modules_rt) {
+            extra->endOutputSession();
+        }
+        mbes_module.endOutputSession();
+        for (auto& extra : extra_mbes_modules_rt) {
+            extra->endOutputSession();
+        }
+        sss_module.endOutputSession();
+        for (auto& extra : extra_sss_modules_rt) {
+            extra->endOutputSession();
+        }
+        output_controller.stopSession();
+        output_session_running = false;
+        refresh_path_run_buttons();
+        std::cout << "[output] session stopped root=" << session_root.toStdString() << std::endl;
+    };
+    auto start_path_following = [&]() {
         app_cfg.path_mode = path_editor->pathConfig();
         app_cfg.path_mode.enabled = true;
         enable_auto_pose = false;
@@ -1525,14 +1775,51 @@ int main(int argc, char** argv) {
         path_follower.start();
         path_mode_running = path_follower.running();
         path_last_tick = std::chrono::steady_clock::now();
-    });
-    QObject::connect(&path_stop_button, &QPushButton::clicked, [&]() {
-        if (!path_mode_enabled_ui) {
-            return;
-        }
+    };
+    auto restart_path_following = [&]() {
         path_follower.stop();
         path_mode_running = false;
-        app_cfg.path_mode.enabled = false;
+        start_path_following();
+    };
+    QObject::connect(&path_start_button, &QPushButton::clicked, [&]() {
+        if (output_session_running) {
+            stop_all_output_sessions();
+            if (!start_all_output_sessions()) {
+                return;
+            }
+            if (path_mode_enabled_ui) {
+                restart_path_following();
+            }
+            return;
+        }
+        const std::vector<standalone_mvp::SonarModuleConfig> modules = collect_runtime_module_configs();
+        const bool any_output = standalone_mvp::anyModuleOutputEnabled(modules);
+        if (!path_mode_enabled_ui && !any_output) {
+            QMessageBox::warning(
+                &dashboard_window,
+                QStringLiteral("Output"),
+                QStringLiteral("No File or TCP output is enabled.\nEnable output in sonar advanced settings first."));
+            return;
+        }
+        if (any_output) {
+            if (!start_all_output_sessions()) {
+                return;
+            }
+        }
+        if (path_mode_enabled_ui) {
+            start_path_following();
+        }
+    });
+    QObject::connect(&path_stop_button, &QPushButton::clicked, [&]() {
+        if (!output_session_running) {
+            return;
+        }
+        if (path_mode_enabled_ui) {
+            path_follower.stop();
+            path_mode_running = false;
+            app_cfg.path_mode.enabled = false;
+        }
+        stop_all_output_sessions();
     });
     QObject::connect(path_editor, &standalone_mvp::PathEditorPanel::teleportRequested, [&](double x, double y, double z) {
         if (path_mode_enabled_ui) {
@@ -1898,9 +2185,119 @@ int main(int argc, char** argv) {
                     }
                 }
             }
+            if (primary_fls_module_idx >= 0 && primary_fls_module_idx < static_cast<int>(app_cfg.sonar_modules.size())) {
+                app_cfg.sonar_modules[static_cast<std::size_t>(primary_fls_module_idx)].fls_config =
+                    fls_module.module_cfg.fls_config;
+            }
+            for (const auto& extra_fls : extra_fls_modules_rt) {
+                if (!extra_fls) {
+                    continue;
+                }
+                for (auto& mod : app_cfg.sonar_modules) {
+                    if (mod.type == standalone_mvp::SonarModuleType::FLS && mod.name == extra_fls->module_cfg.name) {
+                        mod.fls_config = extra_fls->module_cfg.fls_config;
+                        break;
+                    }
+                }
+            }
+            if (primary_mbes_module_idx >= 0 && primary_mbes_module_idx < static_cast<int>(app_cfg.sonar_modules.size())) {
+                app_cfg.sonar_modules[static_cast<std::size_t>(primary_mbes_module_idx)].mbes_config =
+                    mbes_module.module_cfg.mbes_config;
+            }
+            for (const auto& extra_mbes : extra_mbes_modules_rt) {
+                if (!extra_mbes) {
+                    continue;
+                }
+                for (auto& mod : app_cfg.sonar_modules) {
+                    if (mod.type == standalone_mvp::SonarModuleType::MBES && mod.name == extra_mbes->module_cfg.name) {
+                        mod.mbes_config = extra_mbes->module_cfg.mbes_config;
+                        break;
+                    }
+                }
+            }
         }
         config_store.save(app_cfg);
     };
+
+    auto sync_runtime_to_config = [&]() {
+        if (!restart_requested) {
+            app_cfg.pose.x = commanded_pose.position.x();
+            app_cfg.pose.y = commanded_pose.position.y();
+            app_cfg.pose.z = commanded_pose.position.z();
+            app_cfg.pose.step_xy = pose_step_xy;
+            app_cfg.pose.step_z = pose_step_z;
+            app_cfg.pose.step_yaw_deg = radToDeg(pose_step_yaw);
+            app_cfg.pose.enable_auto_pose = enable_auto_pose;
+            app_cfg.camera_system.main_camera.yaw_deg = radToDeg(commanded_pose.yaw);
+            app_cfg.camera_system.main_camera.pitch_deg = radToDeg(commanded_pose.pitch);
+            primary_fls_cfg = fls_module.module_cfg.fls_config;
+            primary_mbes_cfg = mbes_module.module_cfg.mbes_config;
+            primary_sss_cfg = sss_module.module_cfg.sss_config;
+            if (primary_fls_module_idx >= 0 && primary_fls_module_idx < static_cast<int>(app_cfg.sonar_modules.size())) {
+                auto& mod = app_cfg.sonar_modules[static_cast<std::size_t>(primary_fls_module_idx)];
+                mod.fls_config = fls_module.module_cfg.fls_config;
+                mod.point_cloud_config = fls_module.module_cfg.point_cloud_config;
+            }
+            if (primary_mbes_module_idx >= 0 && primary_mbes_module_idx < static_cast<int>(app_cfg.sonar_modules.size())) {
+                auto& mod = app_cfg.sonar_modules[static_cast<std::size_t>(primary_mbes_module_idx)];
+                mod.mbes_config = mbes_module.module_cfg.mbes_config;
+                mod.point_cloud_config = mbes_module.module_cfg.point_cloud_config;
+            }
+            if (primary_sss_module_idx >= 0 && primary_sss_module_idx < static_cast<int>(app_cfg.sonar_modules.size())) {
+                app_cfg.sonar_modules[static_cast<std::size_t>(primary_sss_module_idx)].sss_config =
+                    sss_module.module_cfg.sss_config;
+            }
+            for (const auto& extra_fls : extra_fls_modules_rt) {
+                if (!extra_fls) {
+                    continue;
+                }
+                for (auto& mod : app_cfg.sonar_modules) {
+                    if (mod.type == standalone_mvp::SonarModuleType::FLS && mod.name == extra_fls->module_cfg.name) {
+                        mod.fls_config = extra_fls->module_cfg.fls_config;
+                        mod.point_cloud_config = extra_fls->module_cfg.point_cloud_config;
+                        break;
+                    }
+                }
+            }
+            for (const auto& extra_mbes : extra_mbes_modules_rt) {
+                if (!extra_mbes) {
+                    continue;
+                }
+                for (auto& mod : app_cfg.sonar_modules) {
+                    if (mod.type == standalone_mvp::SonarModuleType::MBES && mod.name == extra_mbes->module_cfg.name) {
+                        mod.mbes_config = extra_mbes->module_cfg.mbes_config;
+                        mod.point_cloud_config = extra_mbes->module_cfg.point_cloud_config;
+                        break;
+                    }
+                }
+            }
+            for (const auto& extra_sss : extra_sss_modules_rt) {
+                if (!extra_sss) {
+                    continue;
+                }
+                for (auto& mod : app_cfg.sonar_modules) {
+                    if (mod.type == standalone_mvp::SonarModuleType::SSS && mod.name == extra_sss->module_cfg.name) {
+                        mod.sss_config = extra_sss->module_cfg.sss_config;
+                        mod.sss_camera_slot1 = extra_sss->module_cfg.sss_camera_slot1;
+                        mod.sss_camera_slot2 = extra_sss->module_cfg.sss_camera_slot2;
+                        break;
+                    }
+                }
+            }
+        }
+    };
+
+    QObject::disconnect(&settings_button, nullptr, nullptr, nullptr);
+    QObject::connect(&settings_button, &QPushButton::pressed, [&]() {
+        sync_runtime_to_config();
+        settings_dialog.setFromConfig(app_cfg);
+        QMetaObject::invokeMethod(&settings_dialog, [&settings_dialog]() {
+            settings_dialog.setWindowState((settings_dialog.windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
+            settings_dialog.show();
+            settings_dialog.raise();
+            settings_dialog.activateWindow();
+        }, Qt::QueuedConnection);
+    });
 
     QObject::connect(settings_dialog.applyButton(), &QPushButton::clicked, [&]() {
         const standalone_mvp::PathModeConfig previous_path_mode = app_cfg.path_mode;

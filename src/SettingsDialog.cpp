@@ -1,5 +1,6 @@
 #include "SettingsDialog.hpp"
 #include "AppConfig.hpp"
+#include "SonarOutputUtil.hpp"
 
 #include <QCoreApplication>
 #include <QDialogButtonBox>
@@ -10,6 +11,7 @@
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <QSignalBlocker>
 #include <QSet>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -83,6 +85,7 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     auto* camera_tab = new QWidget();
     auto* pose_tab = new QWidget();
     auto* environment_tab = new QWidget();
+    auto* output_tab = new QWidget();
 
     world_ = new QComboBox();
     world_->setEditable(true);
@@ -394,6 +397,41 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     environment_form->addRow("", enable_speckle_);
     environment_form->addRow("", enable_attenuation_);
 
+    file_output_table_ = new QTableWidget(0, 3, output_tab);
+    file_output_table_->setHorizontalHeaderLabels(
+        QStringList() << QStringLiteral("Sonar") << QStringLiteral("File Format") << QStringLiteral("Sonar Type"));
+    file_output_table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    file_output_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+
+    tcp_output_table_ = new QTableWidget(0, 4, output_tab);
+    tcp_output_table_->setHorizontalHeaderLabels(
+        QStringList() << QStringLiteral("Sonar") << QStringLiteral("Packet Format") << QStringLiteral("Sonar Type")
+                      << QStringLiteral("TCP Port"));
+    tcp_output_table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    connect(tcp_output_table_, &QTableWidget::cellChanged, this, [this](int row, int column) {
+        if (column != 3 || row < 0) {
+            return;
+        }
+        const auto* name_item = tcp_output_table_->item(row, 0);
+        const auto* format_item = tcp_output_table_->item(row, 1);
+        const auto* port_item = tcp_output_table_->item(row, 3);
+        if (!name_item || !format_item || !port_item) {
+            return;
+        }
+        bool ok = false;
+        const int port = port_item->text().toInt(&ok);
+        if (!ok) {
+            return;
+        }
+        applyTcpPortEdit(sonar_modules_, name_item->text(), format_item->text(), port);
+    });
+
+    auto* output_layout = new QVBoxLayout(output_tab);
+    output_layout->addWidget(new QLabel(QStringLiteral("File Output (enabled in sonar advanced settings)"), output_tab));
+    output_layout->addWidget(file_output_table_, 1);
+    output_layout->addWidget(new QLabel(QStringLiteral("TCP Output (port editable)"), output_tab));
+    output_layout->addWidget(tcp_output_table_, 1);
+
     sonar_table_ = new QTableWidget(0, 5, sonar_tab);
     sonar_table_->setHorizontalHeaderLabels(QStringList() << "Name" << "Type" << "Camera" << "Enabled" << "Config");
     sonar_table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
@@ -426,6 +464,7 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     tabs->addTab(camera_tab, "Camera");
     tabs->addTab(pose_tab, "Pose");
     tabs->addTab(environment_tab, "Environment");
+    tabs->addTab(output_tab, "Output");
 
     auto* buttons = new QDialogButtonBox();
     apply_button_ = buttons->addButton("Apply", QDialogButtonBox::ApplyRole);
@@ -754,6 +793,36 @@ void SettingsDialog::setFromConfig(const AppConfigData& cfg) {
         sonar_modules_.push_back(d);
     }
     refreshSonarTable();
+    refreshOutputTables();
+}
+
+void SettingsDialog::refreshOutputTables() {
+    if (!file_output_table_ || !tcp_output_table_) {
+        return;
+    }
+    QSignalBlocker file_blocker(file_output_table_);
+    QSignalBlocker tcp_blocker(tcp_output_table_);
+
+    const auto file_rows = collectFileOutputRows(sonar_modules_);
+    file_output_table_->setRowCount(static_cast<int>(file_rows.size()));
+    for (int i = 0; i < static_cast<int>(file_rows.size()); ++i) {
+        const auto& row = file_rows[static_cast<std::size_t>(i)];
+        file_output_table_->setItem(i, 0, new QTableWidgetItem(row.module_name));
+        file_output_table_->setItem(i, 1, new QTableWidgetItem(row.file_format));
+        file_output_table_->setItem(i, 2, new QTableWidgetItem(row.sonar_type));
+    }
+
+    const auto tcp_rows = collectTcpOutputRows(sonar_modules_);
+    tcp_output_table_->setRowCount(static_cast<int>(tcp_rows.size()));
+    for (int i = 0; i < static_cast<int>(tcp_rows.size()); ++i) {
+        const auto& row = tcp_rows[static_cast<std::size_t>(i)];
+        tcp_output_table_->setItem(i, 0, new QTableWidgetItem(row.module_name));
+        tcp_output_table_->setItem(i, 1, new QTableWidgetItem(row.packet_format));
+        tcp_output_table_->setItem(i, 2, new QTableWidgetItem(row.sonar_type));
+        auto* port_item = new QTableWidgetItem(QString::number(row.tcp_port));
+        port_item->setFlags(port_item->flags() | Qt::ItemIsEditable);
+        tcp_output_table_->setItem(i, 3, port_item);
+    }
 }
 
 AppConfigData SettingsDialog::configFromUi() {

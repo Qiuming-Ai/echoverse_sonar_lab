@@ -1,4 +1,5 @@
 #include "FlsModule.hpp"
+#include "SonarOutputUtil.hpp"
 
 #include "PointCloudViewerWindow.hpp"
 #include "RockSonarPlotView.hpp"
@@ -106,113 +107,9 @@ unsigned int computeDerivedBeamCount(const standalone_mvp::SonarConfigUi& s) {
 }
 
 QString buildPointCloudOutputPath(const QString& project_dir, const QString& sonar_name) {
-    const QString safe_name = QString(sonar_name).replace(QRegularExpression(R"([\\/:*?"<>|])"), "_");
-    const QString date = QDateTime::currentDateTime().toString("yyyyMMdd_HHmm");
-    const QString out_dir = QDir(project_dir).filePath("Point Cloud");
-    QDir().mkpath(out_dir);
-    return QDir(out_dir).filePath(QString("%1_%2.esl3d").arg(safe_name, date));
-}
-
-QString matlabRootPath() {
-    const QString rel = QStringLiteral("src/matlab_point2file2image");
-    const QString from_cwd = QDir::cleanPath(QDir::currentPath() + QStringLiteral("/") + rel);
-    if (QDir(from_cwd).exists()) {
-        return from_cwd;
-    }
-    return QDir::cleanPath(QCoreApplication::applicationDirPath() + QStringLiteral("/../") + rel);
-}
-
-void updateSonarJsonAndRunMatlab(const QString& esl3d_path, const QString& project_dir, const QString& sonar_json_path) {
-    const QString kMatlabRootPath = matlabRootPath();
-    const QString kPointcloud2fileExe = QDir(kMatlabRootPath).filePath(QStringLiteral("pointcloud2file.exe"));
-    const QString kFile2imageExe = QDir(kMatlabRootPath).filePath(QStringLiteral("file2image.exe"));
-
-    const QString sonar_data_dir = QDir(project_dir).filePath("Sonar Data");
-    QDir().mkpath(sonar_data_dir);
-
-    QJsonObject root;
-    QFile in_file(sonar_json_path);
-    if (in_file.exists() && in_file.open(QIODevice::ReadOnly)) {
-        const QJsonDocument doc = QJsonDocument::fromJson(in_file.readAll());
-        if (doc.isObject()) {
-            root = doc.object();
-        }
-    }
-    in_file.close();
-
-    QJsonObject file_opt_params = root.value("file_opt_params").toObject();
-    file_opt_params["esl3d_path"] = QDir::fromNativeSeparators(esl3d_path);
-    file_opt_params["output_path"] = QDir::fromNativeSeparators(sonar_data_dir);
-    root["file_opt_params"] = file_opt_params;
-
-    QFile out_file(sonar_json_path);
-    if (out_file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        const QJsonDocument doc(root);
-        out_file.write(doc.toJson(QJsonDocument::Indented));
-        out_file.close();
-    }
-
-    QProgressDialog waiting(QStringLiteral("Generating sonar data, please wait..."), QString(), 0, 0);
-    waiting.setWindowTitle(QStringLiteral("Sonar Processing"));
-    waiting.setCancelButton(nullptr);
-    waiting.setMinimumDuration(0);
-    waiting.setWindowModality(Qt::ApplicationModal);
-    waiting.show();
-    QApplication::processEvents();
-
-    QProcess p2f_process;
-    const QString sonar_json_arg = QDir::fromNativeSeparators(sonar_json_path);
-    QStringList args;
-    args << sonar_json_arg;
-    std::cout << "[fls][cmd] " << kPointcloud2fileExe.toStdString() << " " << sonar_json_arg.toStdString() << std::endl;
-    p2f_process.setWorkingDirectory(QDir::fromNativeSeparators(kMatlabRootPath));
-    p2f_process.start(kPointcloud2fileExe, args);
-    while (!p2f_process.waitForFinished(100)) {
-        QApplication::processEvents();
-    }
-    const QString p2f_stdout = QString::fromLocal8Bit(p2f_process.readAllStandardOutput());
-    const QString p2f_stderr = QString::fromLocal8Bit(p2f_process.readAllStandardError());
-    std::cout << "[fls][pointcloud2file] exit_code=" << p2f_process.exitCode()
-              << " status=" << static_cast<int>(p2f_process.exitStatus()) << std::endl;
-    if (!p2f_stdout.trimmed().isEmpty()) {
-        std::cout << "[fls][pointcloud2file][stdout]\n" << p2f_stdout.toStdString() << std::endl;
-    }
-    if (!p2f_stderr.trimmed().isEmpty()) {
-        std::cerr << "[fls][pointcloud2file][stderr]\n" << p2f_stderr.toStdString() << std::endl;
-    }
-    waiting.close();
-
-    const QString h5_path = QDir(sonar_data_dir).filePath(
-        QStringLiteral("%1.h5").arg(QFileInfo(esl3d_path).completeBaseName()));
-    QProgressDialog waiting_image(QStringLiteral("Generating sonar image, please wait..."), QString(), 0, 0);
-    waiting_image.setWindowTitle(QStringLiteral("Sonar Processing"));
-    waiting_image.setCancelButton(nullptr);
-    waiting_image.setMinimumDuration(0);
-    waiting_image.setWindowModality(Qt::ApplicationModal);
-    waiting_image.show();
-    QApplication::processEvents();
-
-    QProcess f2i_process;
-    const QString h5_arg = QDir::fromNativeSeparators(h5_path);
-    QStringList image_args;
-    image_args << h5_arg;
-    std::cout << "[fls][cmd] " << kFile2imageExe.toStdString() << " " << h5_arg.toStdString() << std::endl;
-    f2i_process.setWorkingDirectory(QDir::fromNativeSeparators(kMatlabRootPath));
-    f2i_process.start(kFile2imageExe, image_args);
-    while (!f2i_process.waitForFinished(100)) {
-        QApplication::processEvents();
-    }
-    const QString image_stdout = QString::fromLocal8Bit(f2i_process.readAllStandardOutput());
-    const QString image_stderr = QString::fromLocal8Bit(f2i_process.readAllStandardError());
-    std::cout << "[fls][file2image] exit_code=" << f2i_process.exitCode()
-              << " status=" << static_cast<int>(f2i_process.exitStatus()) << std::endl;
-    if (!image_stdout.trimmed().isEmpty()) {
-        std::cout << "[fls][file2image][stdout]\n" << image_stdout.toStdString() << std::endl;
-    }
-    if (!image_stderr.trimmed().isEmpty()) {
-        std::cerr << "[fls][file2image][stderr]\n" << image_stderr.toStdString() << std::endl;
-    }
-    waiting_image.close();
+    (void)project_dir;
+    (void)sonar_name;
+    return QString();
 }
 
 } // namespace
@@ -351,7 +248,6 @@ void FlsModule::connectWidgetSignals() {
             module_cfg.fls_config.file_output_enabled = file_output_enabled;
             module_cfg.fls_config.tcp_host = tcp_host.trimmed().isEmpty() ? QStringLiteral("0.0.0.0") : tcp_host.trimmed();
             module_cfg.fls_config.tcp_port = std::clamp(tcp_port, 1, 65535);
-            applyEsl2dOutputRuntime();
 
             if (sonar) {
                 sonar->setRange(runtime_range_m);
@@ -376,25 +272,64 @@ void FlsModule::connectWidgetSignals() {
         });
 }
 
-void FlsModule::applyEsl2dOutputRuntime() {
-    if (esl2d_project_dir_.isEmpty()) {
-        return;
-    }
+void FlsModule::initEsl2dRecording(const QString& project_dir) {
+    esl2d_project_dir_ = project_dir;
+}
+
+void FlsModule::beginOutputSession(standalone_mvp::SonarTcpHub* hub,
+                                   const standalone_mvp::ModuleOutputSession& session) {
+    output_session_ = session;
+    esl2d_file_writer_.resetFrameCount();
+    point_cloud_tcp_streamer.resetFrameCount();
+    esl2d_file_writer_.setTcpHub(hub);
+    esl2d_file_writer_.setSessionActive(true);
+    point_cloud_tcp_streamer.setTcpHub(hub);
+    point_cloud_tcp_streamer.setSessionActive(true);
+
     const auto& c = module_cfg.fls_config;
-    const bool file_on = esl2dOutputEnabled(c.file_output_enabled);
-    const QString path =
-        standalone_mvp::buildEsl2dOutputPath(esl2d_project_dir_, module_cfg.name, QStringLiteral("fls"));
     esl2d_file_writer_.applyConfig(
         c.tcp_output_enabled,
         c.tcp_host.toStdString(),
         static_cast<std::uint16_t>(std::clamp(c.tcp_port, 1, 65535)),
-        file_on,
-        path.toStdString());
+        c.file_output_enabled,
+        session.esl2d_path.toStdString());
+
+    if (point_cloud_runtime_enabled) {
+        const auto& pc = module_cfg.point_cloud_config;
+        point_cloud_cfg_runtime.file_output_path = session.esl3d_path.toStdString();
+        point_cloud_tcp_streamer.applyConfig(
+            pc.tcp_output_enabled,
+            pc.tcp_host.toStdString(),
+            static_cast<std::uint16_t>(std::clamp(pc.tcp_port, 1, 65535)),
+            pc.file_output_enabled,
+            session.esl3d_path.toStdString());
+    }
 }
 
-void FlsModule::initEsl2dRecording(const QString& project_dir) {
-    esl2d_project_dir_ = project_dir;
-    applyEsl2dOutputRuntime();
+void FlsModule::endOutputSession() {
+    const bool run_post = module_cfg.point_cloud_config.file_output_enabled && !output_session_.esl3d_path.isEmpty();
+    const QString esl3d_path = output_session_.esl3d_path;
+    const QString waveform_dir = output_session_.waveform_dir;
+
+    esl2d_file_writer_.setSessionActive(false);
+    esl2d_file_writer_.close();
+    point_cloud_tcp_streamer.setSessionActive(false);
+    point_cloud_tcp_streamer.stop();
+    output_session_ = {};
+
+    if (run_post && !point_cloud_sonar_json_path_.isEmpty()) {
+        standalone_mvp::runPointCloudPostProcess(esl3d_path, point_cloud_sonar_json_path_, waveform_dir);
+    }
+}
+
+standalone_mvp::ModuleRecordingStats FlsModule::collectRecordingStats() const {
+    standalone_mvp::ModuleRecordingStats stats;
+    stats.module_name = module_cfg.name;
+    stats.type = standalone_mvp::SonarModuleType::FLS;
+    stats.config = module_cfg;
+    stats.esl2d_frames = esl2d_file_writer_.framesWritten();
+    stats.esl3d_frames = point_cloud_tcp_streamer.framesWritten();
+    return stats;
 }
 
 bool FlsModule::tick(const Eigen::Affine3d& pose,
@@ -463,7 +398,7 @@ bool FlsModule::initPointCloudRuntime(
     point_cloud_cfg_runtime.file_output_enabled = module_cfg.point_cloud_config.file_output_enabled;
     point_cloud_cfg_runtime.tcp_host = module_cfg.point_cloud_config.tcp_host.toStdString();
     point_cloud_cfg_runtime.tcp_port = static_cast<std::uint16_t>(std::clamp(module_cfg.point_cloud_config.tcp_port, 1, 65535));
-    point_cloud_cfg_runtime.file_output_path = buildPointCloudOutputPath(project_dir, module_cfg.name).toStdString();
+    point_cloud_cfg_runtime.file_output_path.clear();
     point_cloud_cfg_runtime.enable_reverb = env_cfg.enable_reverb;
     point_cloud_cfg_runtime.enable_speckle = env_cfg.enable_speckle;
     point_cloud_cfg_runtime.enable_attenuation = env_cfg.enable_attenuation;
@@ -494,12 +429,8 @@ bool FlsModule::initPointCloudRuntime(
         point_cloud_window->move(x, y);
         point_cloud_window->show();
     }
-    point_cloud_tcp_streamer.applyConfig(
-        point_cloud_cfg_runtime.tcp_output_enabled,
-        point_cloud_cfg_runtime.tcp_host,
-        point_cloud_cfg_runtime.tcp_port,
-        point_cloud_cfg_runtime.file_output_enabled,
-        point_cloud_cfg_runtime.file_output_path);
+    point_cloud_tcp_streamer.applyConfig(false, point_cloud_cfg_runtime.tcp_host, point_cloud_cfg_runtime.tcp_port, false,
+                                        point_cloud_cfg_runtime.file_output_path);
     const standalone_mvp::PointCloudTcpRuntimeStatus tcp_status = point_cloud_tcp_streamer.status();
     point_cloud_window->setTcpRuntimeStatus(
         tcp_status.running, tcp_status.client_connected, tcp_status.last_sent_seq, tcp_status.last_payload_bytes);
@@ -515,7 +446,6 @@ void FlsModule::consumePointCloudUiConfig() {
     if (!point_cloud_window->consumePendingConfig(cfg_from_ui)) {
         return;
     }
-    const bool was_file_output_enabled = point_cloud_cfg_runtime.file_output_enabled;
     point_cloud_cfg_runtime.enabled = true;
     const double synced_range = std::clamp(cfg_from_ui.range_m, 0.1, 100.0);
     point_cloud_cfg_runtime.range_m = synced_range;
@@ -531,6 +461,10 @@ void FlsModule::consumePointCloudUiConfig() {
     point_cloud_cfg_runtime.file_output_enabled = cfg_from_ui.file_output_enabled;
     point_cloud_cfg_runtime.tcp_host = cfg_from_ui.tcp_host;
     point_cloud_cfg_runtime.tcp_port = cfg_from_ui.tcp_port;
+    module_cfg.point_cloud_config.tcp_output_enabled = cfg_from_ui.tcp_output_enabled;
+    module_cfg.point_cloud_config.file_output_enabled = cfg_from_ui.file_output_enabled;
+    module_cfg.point_cloud_config.tcp_host = QString::fromStdString(cfg_from_ui.tcp_host);
+    module_cfg.point_cloud_config.tcp_port = static_cast<int>(cfg_from_ui.tcp_port);
     // PointCloud -> FLS range sync (bidirectional).
     runtime_range_m = static_cast<float>(synced_range);
     module_cfg.fls_config.range_m = synced_range;
@@ -542,17 +476,16 @@ void FlsModule::consumePointCloudUiConfig() {
         rock_sonar_ui->setRange(static_cast<int>(std::lround(synced_range)));
     }
     point_cloud_sim->setConfig(point_cloud_cfg_runtime);
-    point_cloud_tcp_streamer.applyConfig(
-        point_cloud_cfg_runtime.tcp_output_enabled,
-        point_cloud_cfg_runtime.tcp_host,
-        point_cloud_cfg_runtime.tcp_port,
-        point_cloud_cfg_runtime.file_output_enabled,
-        point_cloud_cfg_runtime.file_output_path);
-    if (was_file_output_enabled && !point_cloud_cfg_runtime.file_output_enabled && !point_cloud_project_dir_.isEmpty()) {
-        if (QFile::exists(point_cloud_sonar_json_path_)) {
-            updateSonarJsonAndRunMatlab(
-                QString::fromStdString(point_cloud_cfg_runtime.file_output_path), point_cloud_project_dir_, point_cloud_sonar_json_path_);
-        }
+    if (output_session_.module_dir.isEmpty()) {
+        point_cloud_tcp_streamer.applyConfig(false, point_cloud_cfg_runtime.tcp_host, point_cloud_cfg_runtime.tcp_port,
+                                             false, point_cloud_cfg_runtime.file_output_path);
+    } else {
+        point_cloud_tcp_streamer.applyConfig(
+            point_cloud_cfg_runtime.tcp_output_enabled,
+            point_cloud_cfg_runtime.tcp_host,
+            point_cloud_cfg_runtime.tcp_port,
+            point_cloud_cfg_runtime.file_output_enabled,
+            point_cloud_cfg_runtime.file_output_path);
     }
     const standalone_mvp::PointCloudTcpRuntimeStatus st = point_cloud_tcp_streamer.status();
     point_cloud_window->setTcpRuntimeStatus(st.running, st.client_connected, st.last_sent_seq, st.last_payload_bytes);

@@ -36,15 +36,45 @@ bool PathFollower::running() const {
     return running_;
 }
 
+std::size_t PathFollower::segmentCount() const {
+    if (waypoints_.size() < 2) {
+        return 0;
+    }
+    return loop_ ? waypoints_.size() : waypoints_.size() - 1;
+}
+
+Eigen::Vector3d PathFollower::segmentStart(const std::size_t segment_index) const {
+    return waypointToWorld(waypoints_[segment_index % waypoints_.size()]);
+}
+
+Eigen::Vector3d PathFollower::segmentEnd(const std::size_t segment_index) const {
+    if (loop_) {
+        return waypointToWorld(waypoints_[(segment_index + 1) % waypoints_.size()]);
+    }
+    return waypointToWorld(waypoints_[segment_index + 1]);
+}
+
+double PathFollower::segmentSpeedMps(const std::size_t segment_index) const {
+    if (waypoints_.empty()) {
+        return 1.0;
+    }
+    return std::max(0.001, waypoints_[segment_index % waypoints_.size()].speed_mps);
+}
+
 bool PathFollower::update(double dt_seconds, PathFollowerPose* out_pose) {
     if (!running_ || waypoints_.size() < 2) {
         return false;
     }
-    double remaining = std::max(0.0, dt_seconds) *
-                       std::max(0.001, waypoints_[segment_index_].speed_mps);
+    const std::size_t total_segments = segmentCount();
+    if (total_segments == 0) {
+        running_ = false;
+        return false;
+    }
+
+    double remaining = std::max(0.0, dt_seconds) * segmentSpeedMps(segment_index_);
     while (remaining > 1e-9 && running_) {
-        const Eigen::Vector3d a = waypointToWorld(waypoints_[segment_index_]);
-        const Eigen::Vector3d b = waypointToWorld(waypoints_[segment_index_ + 1]);
+        const Eigen::Vector3d a = segmentStart(segment_index_);
+        const Eigen::Vector3d b = segmentEnd(segment_index_);
         const Eigen::Vector3d d = b - a;
         const double len = d.norm();
         if (len < 1e-9) {
@@ -83,19 +113,20 @@ Eigen::Vector3d PathFollower::waypointToWorld(const PathWaypointConfig& wp) cons
 }
 
 bool PathFollower::advanceToNextSegment() {
-    if (waypoints_.size() < 2) {
+    const std::size_t total_segments = segmentCount();
+    if (total_segments == 0) {
         return false;
     }
     ++segment_index_;
     segment_progress_m_ = 0.0;
-    if (segment_index_ + 1 < waypoints_.size()) {
+    if (segment_index_ < total_segments) {
         return true;
     }
     if (loop_) {
         segment_index_ = 0;
-        return waypoints_.size() >= 2;
+        return total_segments >= 1;
     }
-    segment_index_ = waypoints_.size() - 2;
+    segment_index_ = total_segments - 1;
     return false;
 }
 
@@ -107,4 +138,3 @@ void PathFollower::writeCurrentPose(PathFollowerPose* out_pose) const {
 }
 
 } // namespace standalone_mvp
-

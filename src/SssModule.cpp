@@ -248,25 +248,39 @@ void SssModule::setupStripWidget(QWidget* parent_widget) {
     strip_widget->setSonarPalette(1);
 }
 
-void SssModule::applyEsl2dOutputRuntime() {
-    if (esl2d_project_dir_.isEmpty()) {
-        return;
-    }
+void SssModule::initEsl2dRecording(const QString& project_dir) {
+    esl2d_project_dir_ = project_dir;
+}
+
+void SssModule::beginOutputSession(standalone_mvp::SonarTcpHub* hub,
+                                   const standalone_mvp::ModuleOutputSession& session) {
+    output_session_ = session;
+    esl2d_file_writer_.resetFrameCount();
+    esl2d_file_writer_.setTcpHub(hub);
+    esl2d_file_writer_.setSessionActive(true);
+
     const auto& c = module_cfg.sss_config;
-    const bool file_on = esl2dOutputEnabled(c.file_output_enabled);
-    const QString path =
-        standalone_mvp::buildEsl2dOutputPath(esl2d_project_dir_, module_cfg.name, QStringLiteral("sss"));
     esl2d_file_writer_.applyConfig(
         c.tcp_output_enabled,
         c.tcp_host.toStdString(),
         static_cast<std::uint16_t>(std::clamp(c.tcp_port, 1, 65535)),
-        file_on,
-        path.toStdString());
+        c.file_output_enabled,
+        session.esl2d_path.toStdString());
 }
 
-void SssModule::initEsl2dRecording(const QString& project_dir) {
-    esl2d_project_dir_ = project_dir;
-    applyEsl2dOutputRuntime();
+void SssModule::endOutputSession() {
+    esl2d_file_writer_.setSessionActive(false);
+    esl2d_file_writer_.close();
+    output_session_ = {};
+}
+
+standalone_mvp::ModuleRecordingStats SssModule::collectRecordingStats() const {
+    standalone_mvp::ModuleRecordingStats stats;
+    stats.module_name = module_cfg.name;
+    stats.type = standalone_mvp::SonarModuleType::SSS;
+    stats.config = module_cfg;
+    stats.esl2d_frames = esl2d_file_writer_.framesWritten();
+    return stats;
 }
 
 void SssModule::connectStripSignals() {
@@ -301,7 +315,6 @@ void SssModule::connectStripSignals() {
             module_cfg.sss_config.tcp_host = tcp_host.trimmed().isEmpty() ? QStringLiteral("0.0.0.0") : tcp_host.trimmed();
             module_cfg.sss_config.tcp_port = std::clamp(tcp_port, 1, 65535);
             applySssConfigToSimulators(module_cfg.sss_config, sonar_a, sonar_b, runtime_range_m, runtime_gain);
-            applyEsl2dOutputRuntime();
         });
 }
 
