@@ -41,10 +41,15 @@ protected:
     QDoubleSpinBox *spBeamWidth = nullptr;
     QDoubleSpinBox *spBeamHeight = nullptr;
     QDoubleSpinBox *spAngleResolution = nullptr;
+    QCheckBox *boxTcpOutput = nullptr;
+    QCheckBox *boxFileOutput = nullptr;
+    QLineEdit *edTcpHost = nullptr;
+    QSpinBox *spTcpPort = nullptr;
     QPushButton *advancedDrawerToggleButton = nullptr;
     bool advancedPanelEnabled = false;
     bool advancedDrawerVisible = false;
     bool advancedFormExtraControlsAttached = false;
+    bool advancedFormOutputControlsAttached = false;
     bool syncingAdvancedControls = false;
 
 public:
@@ -61,7 +66,11 @@ public:
                                 double bandwidth_khz,
                                 double beam_width_deg,
                                 double beam_height_deg,
-                                double angle_resolution_deg);
+                                double angle_resolution_deg,
+                                bool tcp_output_enabled,
+                                bool file_output_enabled,
+                                const QString& tcp_host,
+                                int tcp_port);
     QSlider *slGain = nullptr;
     QSlider *slRange = nullptr;
     QComboBox *comboPalette = nullptr;
@@ -89,6 +98,7 @@ protected slots:
     void onComboPaletteChanged(int);
     void onCheckboxGridChanged(bool);
     void onAdvancedControlChanged(double);
+    void onOutputControlChanged();
 
 signals:
     void gainChanged(int);
@@ -101,7 +111,11 @@ signals:
                                     double bandwidth_khz,
                                     double beam_width_deg,
                                     double beam_height_deg,
-                                    double angle_resolution_deg);
+                                    double angle_resolution_deg,
+                                    bool tcp_output_enabled,
+                                    bool file_output_enabled,
+                                    const QString& tcp_host,
+                                    int tcp_port);
 };
 
 #endif /* SONAR_WIDGET_H */

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AppConfig.hpp"
+#include "Esl2dFileWriter.hpp"
 #include "CameraModule.hpp"
 
 #include <Eigen/Geometry>
@@ -30,6 +31,9 @@ public:
     bool sonarEnabledByBinding() const;
     void setupStripWidget(QWidget* parent_widget);
     void connectStripSignals();
+    void initEsl2dRecording(const QString& project_dir);
+    void applyEsl2dOutputRuntime();
+    int updateStride() const;
     void tickFromCameraRuntimes(const std::vector<SubCameraRuntime>& sub_cameras,
                                 const standalone_mvp::EnvironmentConfig& env_cfg,
                                 const Eigen::Vector3d& vehicle_position,
@@ -39,12 +43,10 @@ public:
     std::unique_ptr<sonar_core::AcousticRaySimulator> sonar_a;
     std::unique_ptr<sonar_core::AcousticRaySimulator> sonar_b;
     QPointer<SideScanControlPanel> strip_widget;
+    standalone_mvp::Esl2dFileWriter esl2d_file_writer_;
+    QString esl2d_project_dir_;
     float runtime_range_m = 0.0f;
     float runtime_gain = 0.0f;
-    bool pending_range_update = false;
-    bool pending_gain_update = false;
-    float pending_range_m = 0.0f;
-    float pending_gain = 0.0f;
     standalone_mvp::SonarModuleConfig module_cfg;
     osg::ref_ptr<osg::Group> scene_a;
     osg::ref_ptr<osg::Group> scene_b;

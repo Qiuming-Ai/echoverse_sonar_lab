@@ -503,14 +503,35 @@ void SonarControlPanel::setAdvancedPanelEnabled(bool enabled) {
 }
 
 void SonarControlPanel::ensureAdvancedFormExtraControls() {
-    if (advancedFormExtraControlsAttached || !advancedForm || !advancedPanel || !comboPalette || !boxGrid) {
+    if (!advancedForm || !advancedPanel || !comboPalette || !boxGrid) {
         return;
     }
-    comboPalette->setParent(advancedPanel);
-    boxGrid->setParent(advancedPanel);
-    advancedForm->addRow("Palette", comboPalette);
-    advancedForm->addRow("Grid", boxGrid);
-    advancedFormExtraControlsAttached = true;
+    if (!advancedFormExtraControlsAttached) {
+        comboPalette->setParent(advancedPanel);
+        boxGrid->setParent(advancedPanel);
+        advancedForm->addRow("Palette", comboPalette);
+        advancedForm->addRow("Grid", boxGrid);
+        advancedFormExtraControlsAttached = true;
+    }
+    if (advancedFormOutputControlsAttached) {
+        return;
+    }
+    boxTcpOutput = new QCheckBox("Enable TCP Output", advancedPanel);
+    boxFileOutput = new QCheckBox("Enable File Output", advancedPanel);
+    edTcpHost = new QLineEdit(advancedPanel);
+    edTcpHost->setPlaceholderText("0.0.0.0");
+    spTcpPort = new QSpinBox(advancedPanel);
+    spTcpPort->setRange(1, 65535);
+    spTcpPort->setValue(30001);
+    advancedForm->addRow("", boxTcpOutput);
+    advancedForm->addRow("", boxFileOutput);
+    advancedForm->addRow("TCP Host", edTcpHost);
+    advancedForm->addRow("TCP Port", spTcpPort);
+    connect(boxTcpOutput, &QCheckBox::toggled, this, &SonarControlPanel::onOutputControlChanged);
+    connect(boxFileOutput, &QCheckBox::toggled, this, &SonarControlPanel::onOutputControlChanged);
+    connect(edTcpHost, &QLineEdit::textChanged, this, &SonarControlPanel::onOutputControlChanged);
+    connect(spTcpPort, qOverload<int>(&QSpinBox::valueChanged), this, &SonarControlPanel::onOutputControlChanged);
+    advancedFormOutputControlsAttached = true;
 }
 
 void SonarControlPanel::updateBandwidthUpperBound() {
@@ -531,9 +552,16 @@ void SonarControlPanel::setAdvancedSonarConfig(double range_m,
                                                double bandwidth_khz,
                                                double beam_width_deg,
                                                double beam_height_deg,
-                                               double angle_resolution_deg) {
+                                               double angle_resolution_deg,
+                                               bool tcp_output_enabled,
+                                               bool file_output_enabled,
+                                               const QString& tcp_host,
+                                               int tcp_port) {
     if (!spRange || !spGain || !spCenterFrequency || !spBandwidth || !spBeamWidth || !spBeamHeight || !spAngleResolution) {
         return;
+    }
+    if (advancedPanelEnabled) {
+        ensureAdvancedFormExtraControls();
     }
     syncingAdvancedControls = true;
     {
@@ -552,6 +580,16 @@ void SonarControlPanel::setAdvancedSonarConfig(double range_m,
         spBeamWidth->setValue(std::clamp(beam_width_deg, 0.01, 179.0));
         spBeamHeight->setValue(std::clamp(beam_height_deg, 0.01, 179.0));
         spAngleResolution->setValue(std::clamp(angle_resolution_deg, 0.01, 30.0));
+    }
+    if (boxTcpOutput && boxFileOutput && edTcpHost && spTcpPort) {
+        const QSignalBlocker b7(boxTcpOutput);
+        const QSignalBlocker b8(boxFileOutput);
+        const QSignalBlocker b9(edTcpHost);
+        const QSignalBlocker b10(spTcpPort);
+        boxTcpOutput->setChecked(tcp_output_enabled);
+        boxFileOutput->setChecked(file_output_enabled);
+        edTcpHost->setText(tcp_host);
+        spTcpPort->setValue(std::clamp(tcp_port, 1, 65535));
     }
     if (slRange) {
         slRange->setValue(std::clamp(static_cast<int>(std::lround(spRange->value())), slRange->minimum(), slRange->maximum()));
@@ -573,7 +611,18 @@ void SonarControlPanel::emitAdvancedSonarConfigChanged() {
         spBandwidth->value(),
         spBeamWidth->value(),
         spBeamHeight->value(),
-        spAngleResolution->value());
+        spAngleResolution->value(),
+        boxTcpOutput ? boxTcpOutput->isChecked() : false,
+        boxFileOutput ? boxFileOutput->isChecked() : false,
+        edTcpHost ? edTcpHost->text() : QString(),
+        spTcpPort ? spTcpPort->value() : 30001);
+}
+
+void SonarControlPanel::onOutputControlChanged() {
+    if (syncingAdvancedControls) {
+        return;
+    }
+    emitAdvancedSonarConfigChanged();
 }
 
 void SonarControlPanel::onAdvancedControlChanged(double) {

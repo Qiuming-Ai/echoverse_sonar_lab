@@ -28,8 +28,8 @@ namespace standalone_mvp {
 
 namespace {
 
-bool runPoseEditorDialog(QWidget* parent, const QString& title, std::array<double, 6>* pose) {
-    if (!pose) {
+bool runPoseScaleEditorDialog(QWidget* parent, const QString& title, std::array<double, 6>* pose, double* scale) {
+    if (!pose || !scale) {
         return false;
     }
     QDialog dlg(parent);
@@ -48,6 +48,12 @@ bool runPoseEditorDialog(QWidget* parent, const QString& title, std::array<doubl
         s[i]->setValue((*pose)[static_cast<std::size_t>(i)]);
         form->addRow(labels[i], s[i]);
     }
+    auto* scale_spin = new QDoubleSpinBox(&dlg);
+    scale_spin->setRange(0.000001, 1.0e6);
+    scale_spin->setDecimals(6);
+    scale_spin->setSingleStep(0.1);
+    scale_spin->setValue(*scale);
+    form->addRow(QStringLiteral("Scale"), scale_spin);
     layout->addLayout(form);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
@@ -59,6 +65,7 @@ bool runPoseEditorDialog(QWidget* parent, const QString& title, std::array<doubl
     for (int i = 0; i < 6; ++i) {
         (*pose)[static_cast<std::size_t>(i)] = s[i]->value();
     }
+    *scale = scale_spin->value();
     return true;
 }
 
@@ -158,15 +165,15 @@ SceneEditorPanel::SceneEditorPanel(QWidget* parent)
     hint_->setStyleSheet(QStringLiteral("QLabel{color:#9fb6cc;font-size:11px;}"));
     table_ = new QTableWidget(this);
     table_->setMinimumWidth(640);
-    table_->setColumnCount(7);
+    table_->setColumnCount(8);
     table_->setHorizontalHeaderLabels({QStringLiteral("Model"), QStringLiteral("X"), QStringLiteral("Y"), QStringLiteral("Z"),
-                                        QStringLiteral("Roll"), QStringLiteral("Pitch"), QStringLiteral("Yaw")});
+                                        QStringLiteral("Roll"), QStringLiteral("Pitch"), QStringLiteral("Yaw"), QStringLiteral("Scale")});
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->verticalHeader()->setVisible(false);
     table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    for (int i = 1; i < 7; ++i) {
+    for (int i = 1; i < 8; ++i) {
         table_->horizontalHeader()->setSectionResizeMode(i, QHeaderView::ResizeToContents);
     }
     add_btn_ = new QPushButton(QStringLiteral("Add Model..."), this);
@@ -271,6 +278,7 @@ void SceneEditorPanel::refreshTable() {
         for (int c = 0; c < 6; ++c) {
             table_->setItem(row, c + 1, new QTableWidgetItem(QString::number(e.pose[static_cast<std::size_t>(c)], 'g', 6)));
         }
+        table_->setItem(row, 7, new QTableWidgetItem(QString::number(e.scale, 'g', 6)));
     }
 }
 
@@ -320,6 +328,12 @@ void SceneEditorPanel::onAddModel() {
         sp[i]->setValue(0.0);
         form->addRow(labels[i], sp[i]);
     }
+    auto* scale_spin = new QDoubleSpinBox(&dlg);
+    scale_spin->setRange(0.000001, 1.0e6);
+    scale_spin->setDecimals(6);
+    scale_spin->setSingleStep(0.1);
+    scale_spin->setValue(1.0);
+    form->addRow(QStringLiteral("Scale"), scale_spin);
     layout->addLayout(form);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
@@ -333,6 +347,7 @@ void SceneEditorPanel::onAddModel() {
     for (int i = 0; i < 6; ++i) {
         ent.pose[static_cast<std::size_t>(i)] = sp[i]->value();
     }
+    ent.scale = scale_spin->value();
     if (ent.model_name.isEmpty()) {
         return;
     }
@@ -358,10 +373,12 @@ void SceneEditorPanel::onEditPose() {
         return;
     }
     std::array<double, 6> pose = entries_[row].pose;
-    if (!runPoseEditorDialog(this, QStringLiteral("Pose — %1").arg(entries_[row].model_name), &pose)) {
+    double scale = entries_[row].scale;
+    if (!runPoseScaleEditorDialog(this, QStringLiteral("Transform — %1").arg(entries_[row].model_name), &pose, &scale)) {
         return;
     }
     entries_[row].pose = pose;
+    entries_[row].scale = scale;
     QString err;
     if (!saveEntriesToDisk(&err)) {
         QMessageBox::critical(this, QStringLiteral("Error"), err);

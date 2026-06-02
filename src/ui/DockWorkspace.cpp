@@ -281,6 +281,8 @@ DockWorkspace::LayoutPreset DockWorkspace::layoutPreset() const {
         return LayoutPreset::Horizontal;
     case LayoutMode::Vertical:
         return LayoutPreset::Vertical;
+    case LayoutMode::OneByThree:
+        return LayoutPreset::OneByThree;
     case LayoutMode::Quad:
         return LayoutPreset::Quad;
     case LayoutMode::Single:
@@ -294,6 +296,7 @@ void DockWorkspace::applyLayoutPreset(LayoutPreset preset) {
         switch (preset) {
         case LayoutPreset::Horizontal: return LayoutMode::Horizontal;
         case LayoutPreset::Vertical: return LayoutMode::Vertical;
+        case LayoutPreset::OneByThree: return LayoutMode::OneByThree;
         case LayoutPreset::Quad: return LayoutMode::Quad;
         case LayoutPreset::Single:
         default: return LayoutMode::Single;
@@ -343,6 +346,13 @@ QPair<QStringList, QStringList> DockWorkspace::verticalPaneTabTitles() const {
         return {};
     }
     return {tabTitlesForPane(pane_tb_top_), tabTitlesForPane(pane_tb_bottom_)};
+}
+
+QList<QStringList> DockWorkspace::oneByThreePaneTabTitles() const {
+    if (layout_mode_ != LayoutMode::OneByThree) {
+        return {};
+    }
+    return {tabTitlesForPane(pane_13_left_), tabTitlesForPane(pane_13_center_), tabTitlesForPane(pane_13_right_)};
 }
 
 void DockWorkspace::quadPaneTabTitles(
@@ -433,6 +443,14 @@ void DockWorkspace::restoreVerticalPaneTabTitles(
     redistributeTabsByTitles({pane_tb_top_, pane_tb_bottom_}, {top_titles, bottom_titles});
 }
 
+void DockWorkspace::restoreOneByThreePaneTabTitles(
+    const QStringList& left_titles, const QStringList& center_titles, const QStringList& right_titles) {
+    if (layout_mode_ != LayoutMode::OneByThree || !pane_13_left_ || !pane_13_center_ || !pane_13_right_) {
+        return;
+    }
+    redistributeTabsByTitles({pane_13_left_, pane_13_center_, pane_13_right_}, {left_titles, center_titles, right_titles});
+}
+
 void DockWorkspace::restoreQuadPaneTabTitles(
     const QStringList& top_left_titles, const QStringList& top_right_titles,
     const QStringList& bottom_left_titles, const QStringList& bottom_right_titles) {
@@ -507,6 +525,8 @@ QList<DockWorkspace::DockPane*> DockWorkspace::currentPanes() const {
         return {pane_lr_left_, pane_lr_right_};
     case LayoutMode::Vertical:
         return {pane_tb_top_, pane_tb_bottom_};
+    case LayoutMode::OneByThree:
+        return {pane_13_left_, pane_13_center_, pane_13_right_};
     case LayoutMode::Quad:
         return {pane_q_tl_, pane_q_tr_, pane_q_bl_, pane_q_br_};
     }
@@ -527,6 +547,9 @@ void DockWorkspace::clearRootWidget() {
     pane_lr_right_ = nullptr;
     pane_tb_top_ = nullptr;
     pane_tb_bottom_ = nullptr;
+    pane_13_left_ = nullptr;
+    pane_13_center_ = nullptr;
+    pane_13_right_ = nullptr;
     pane_q_tl_ = nullptr;
     pane_q_tr_ = nullptr;
     pane_q_bl_ = nullptr;
@@ -565,6 +588,20 @@ QWidget* DockWorkspace::buildVerticalLayout() {
     split->addWidget(pane_tb_top_);
     split->addWidget(pane_tb_bottom_);
     split->setSizes({1, 1});
+    return split;
+}
+
+QWidget* DockWorkspace::buildOneByThreeLayout() {
+    auto* split = new QSplitter(Qt::Horizontal);
+    split->setChildrenCollapsible(false);
+    styleSplitterHandle(split);
+    pane_13_left_ = createPane();
+    pane_13_center_ = createPane();
+    pane_13_right_ = createPane();
+    split->addWidget(pane_13_left_);
+    split->addWidget(pane_13_center_);
+    split->addWidget(pane_13_right_);
+    split->setSizes({1, 1, 1});
     return split;
 }
 
@@ -614,6 +651,10 @@ void DockWorkspace::activateMode(LayoutMode mode) {
     case LayoutMode::Vertical:
         setRootWidget(buildVerticalLayout());
         active_pane_ = pane_tb_top_;
+        break;
+    case LayoutMode::OneByThree:
+        setRootWidget(buildOneByThreeLayout());
+        active_pane_ = pane_13_left_;
         break;
     case LayoutMode::Quad:
         setRootWidget(buildQuadLayout());
@@ -928,6 +969,7 @@ void DockWorkspace::showPaneContextMenu(DockPane* pane, const QPoint& global_pos
     QMenu menu;
     QAction* split_left = menu.addAction("Split Left/Right");
     QAction* split_top = menu.addAction("Split Top/Bottom");
+    QAction* one_by_three = menu.addAction("Apply 1x3 Layout");
     QAction* quad = menu.addAction("Apply 2x2 Layout");
     menu.addSeparator();
     QAction* restore = menu.addAction("Restore Single");
@@ -935,6 +977,7 @@ void DockWorkspace::showPaneContextMenu(DockPane* pane, const QPoint& global_pos
     const bool can_split = (layout_mode_ == LayoutMode::Single);
     split_left->setEnabled(can_split);
     split_top->setEnabled(can_split);
+    one_by_three->setEnabled(can_split);
     quad->setEnabled(can_split);
     restore->setEnabled(layout_mode_ != LayoutMode::Single);
     if (extra_context_menu_builder_) {
@@ -946,6 +989,15 @@ void DockWorkspace::showPaneContextMenu(DockPane* pane, const QPoint& global_pos
     if (!chosen) return;
     if (chosen == split_left) splitActiveRight();
     else if (chosen == split_top) splitActiveBottom();
+    else if (chosen == one_by_three) {
+        const QList<TabPayload> tabs = takeAllTabs();
+        activateMode(LayoutMode::OneByThree);
+        appendTabs(pane_13_left_, tabs);
+        if (pane_13_left_ && pane_13_left_->tabs()->count() > 0) {
+            pane_13_left_->tabs()->setCurrentIndex(0);
+        }
+        active_pane_ = pane_13_left_;
+    }
     else if (chosen == quad) applyQuadLayout();
     else if (chosen == restore) restoreSingle();
 }

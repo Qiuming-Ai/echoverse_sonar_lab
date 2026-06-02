@@ -718,7 +718,6 @@ int main(int argc, char** argv) {
     const bool primary_side_scan_enabled = sss_module_cfg.enabled && sss_module_cfg.sss_config.enabled;
     const int side_scan_window_width = primary_sss_cfg.window_width;
     const int side_scan_window_height = primary_sss_cfg.window_height;
-    const int side_scan_update_stride = std::max(1, primary_sss_cfg.update_stride);
     const float side_scan_range_m =
         std::clamp(static_cast<float>(primary_sss_cfg.range_m), 1.0f, 1000.0f);
     SssModule sss_module(sss_module_cfg);
@@ -1008,6 +1007,14 @@ int main(int argc, char** argv) {
                 root, initial_pose, 120 + 40 * (extra_idx % 3), 740 + 40 * extra_idx, project_dir, sonar_workspace);
             ++extra_idx;
         }
+        fls_module.initEsl2dRecording(project_dir);
+        for (auto& extra : extra_fls_modules_rt) {
+            extra->initEsl2dRecording(project_dir);
+        }
+        mbes_module.initEsl2dRecording(project_dir);
+        for (auto& extra : extra_mbes_modules_rt) {
+            extra->initEsl2dRecording(project_dir);
+        }
     }
     {
         Eigen::Affine3d initial_pose = Eigen::Affine3d::Identity();
@@ -1219,6 +1226,7 @@ int main(int argc, char** argv) {
     auto preset_from_saved_layout = [&](const QString& text) {
         if (text == "horizontal") return DockWorkspace::LayoutPreset::Horizontal;
         if (text == "vertical") return DockWorkspace::LayoutPreset::Vertical;
+        if (text == "one_by_three") return DockWorkspace::LayoutPreset::OneByThree;
         if (text == "quad") return DockWorkspace::LayoutPreset::Quad;
         return DockWorkspace::LayoutPreset::Single;
     };
@@ -1236,6 +1244,14 @@ int main(int argc, char** argv) {
             sonar_workspace->restoreVerticalPaneTabTitles(
                 app_cfg.sonar_workspace_vertical_top_tabs,
                 app_cfg.sonar_workspace_vertical_bottom_tabs);
+        } else if (saved_sonar_split_layout == "one_by_three" &&
+                   (!app_cfg.sonar_workspace_13_left_tabs.isEmpty() ||
+                    !app_cfg.sonar_workspace_13_center_tabs.isEmpty() ||
+                    !app_cfg.sonar_workspace_13_right_tabs.isEmpty())) {
+            sonar_workspace->restoreOneByThreePaneTabTitles(
+                app_cfg.sonar_workspace_13_left_tabs,
+                app_cfg.sonar_workspace_13_center_tabs,
+                app_cfg.sonar_workspace_13_right_tabs);
         } else if (saved_sonar_split_layout == "quad" &&
                    (!app_cfg.sonar_workspace_quad_top_left_tabs.isEmpty() ||
                     !app_cfg.sonar_workspace_quad_top_right_tabs.isEmpty() ||
@@ -1518,6 +1534,18 @@ int main(int argc, char** argv) {
         path_mode_running = false;
         app_cfg.path_mode.enabled = false;
     });
+    QObject::connect(path_editor, &standalone_mvp::PathEditorPanel::teleportRequested, [&](double x, double y, double z) {
+        if (path_mode_enabled_ui) {
+            return;
+        }
+        path_follower.stop();
+        path_mode_running = false;
+        app_cfg.path_mode.enabled = false;
+        enable_auto_pose = false;
+        commanded_pose.position = Eigen::Vector3d(x, y, z);
+        syncTrackballToPose(trackball.get(), commanded_pose);
+        setCameraViewFromPose(viewer.getCamera(), commanded_pose);
+    });
 
     enum class SonarWindowMode {
         Docked = 0,
@@ -1708,8 +1736,12 @@ int main(int argc, char** argv) {
     mbes_module.connectWidgetSignals();
     for (auto& extra : extra_fls_modules_rt) extra->connectWidgetSignals();
     for (auto& extra : extra_mbes_modules_rt) extra->connectWidgetSignals();
+    sss_module.initEsl2dRecording(project_dir);
     sss_module.connectStripSignals();
-    for (auto& extra : extra_sss_modules_rt) extra->connectStripSignals();
+    for (auto& extra : extra_sss_modules_rt) {
+        extra->initEsl2dRecording(project_dir);
+        extra->connectStripSignals();
+    }
 
     viewer_frame->setFocusPolicy(Qt::StrongFocus);
     viewer_host->setFocusPolicy(Qt::StrongFocus);
@@ -1744,8 +1776,7 @@ int main(int argc, char** argv) {
             app_cfg.camera_system.main_camera.horizontal_fov_deg = camera_hfov_deg;
             app_cfg.camera_system.main_camera.vertical_fov_deg = camera_vfov_deg;
             app_cfg.camera = app_cfg.camera_system.main_camera;
-            primary_sss_cfg.range_m = static_cast<double>(sss_module.runtime_range_m);
-            primary_sss_cfg.gain = static_cast<double>(sss_module.runtime_gain);
+            primary_sss_cfg = sss_module.module_cfg.sss_config;
             if (primary_fls_module_idx >= 0 && primary_fls_module_idx < static_cast<int>(app_cfg.sonar_modules.size())) {
                 auto& mod = app_cfg.sonar_modules[primary_fls_module_idx];
                 mod.fls_config = primary_fls_cfg;
@@ -1795,6 +1826,9 @@ int main(int argc, char** argv) {
             app_cfg.sonar_workspace_horizontal_right_tabs.clear();
             app_cfg.sonar_workspace_vertical_top_tabs.clear();
             app_cfg.sonar_workspace_vertical_bottom_tabs.clear();
+            app_cfg.sonar_workspace_13_left_tabs.clear();
+            app_cfg.sonar_workspace_13_center_tabs.clear();
+            app_cfg.sonar_workspace_13_right_tabs.clear();
             app_cfg.sonar_workspace_quad_top_left_tabs.clear();
             app_cfg.sonar_workspace_quad_top_right_tabs.clear();
             app_cfg.sonar_workspace_quad_bottom_left_tabs.clear();
@@ -1815,6 +1849,17 @@ int main(int argc, char** argv) {
                         const auto tabs = sonar_workspace->verticalPaneTabTitles();
                         app_cfg.sonar_workspace_vertical_top_tabs = tabs.first;
                         app_cfg.sonar_workspace_vertical_bottom_tabs = tabs.second;
+                    }
+                    break;
+                case DockWorkspace::LayoutPreset::OneByThree:
+                    app_cfg.sonar_workspace_split_layout = "one_by_three";
+                    {
+                        const auto tabs = sonar_workspace->oneByThreePaneTabTitles();
+                        if (tabs.size() >= 3) {
+                            app_cfg.sonar_workspace_13_left_tabs = tabs[0];
+                            app_cfg.sonar_workspace_13_center_tabs = tabs[1];
+                            app_cfg.sonar_workspace_13_right_tabs = tabs[2];
+                        }
                     }
                     break;
                 case DockWorkspace::LayoutPreset::Quad:
@@ -2042,7 +2087,7 @@ int main(int argc, char** argv) {
             if ((frames % 2) == 0) {
                 camera_module.updateWidgets();
             }
-            if (!scene_edit_pauses_sonar.load() && (frames % side_scan_update_stride) == 0) {
+            if (!scene_edit_pauses_sonar.load() && (frames % sss_module.updateStride()) == 0) {
                 sss_module.tickFromCameraRuntimes(sub_cameras, global_env_cfg, active_pose.position, frames, image_update_stride);
             }
             fls_module.setPointCloudRenderBlocked(false);
@@ -2143,8 +2188,8 @@ int main(int argc, char** argv) {
                     extra->tickPointCloud(mbes_pose, (frames % image_update_stride) == 0);
                 }
             }
-            if ((frames % side_scan_update_stride) == 0) {
-                for (auto& extra : extra_sss_modules_rt) {
+            for (auto& extra : extra_sss_modules_rt) {
+                if ((frames % extra->updateStride()) == 0) {
                     extra->tickFromCameraRuntimes(sub_cameras, global_env_cfg, active_pose.position, frames, image_update_stride);
                 }
             }
@@ -2288,7 +2333,7 @@ int main(int argc, char** argv) {
         if ((frames % 2) == 0) {
             camera_module.updateWidgets();
         }
-        if (!scene_edit_pauses_sonar.load() && (frames % side_scan_update_stride) == 0) {
+        if (!scene_edit_pauses_sonar.load() && (frames % sss_module.updateStride()) == 0) {
             sss_module.tickFromCameraRuntimes(sub_cameras, global_env_cfg, active_pose.position, frames, image_update_stride);
         }
         fls_module.setPointCloudRenderBlocked(false);
@@ -2389,8 +2434,8 @@ int main(int argc, char** argv) {
                 extra->tickPointCloud(mbes_pose, (frames % image_update_stride) == 0);
             }
         }
-        if ((frames % side_scan_update_stride) == 0) {
-            for (auto& extra : extra_sss_modules_rt) {
+        for (auto& extra : extra_sss_modules_rt) {
+            if ((frames % extra->updateStride()) == 0) {
                 extra->tickFromCameraRuntimes(sub_cameras, global_env_cfg, active_pose.position, frames, image_update_stride);
             }
         }

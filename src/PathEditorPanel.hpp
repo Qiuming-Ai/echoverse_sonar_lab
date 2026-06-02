@@ -6,6 +6,8 @@
 #include <QCheckBox>
 #include <QPushButton>
 #include <QTableWidget>
+#include <QToolButton>
+#include <QVBoxLayout>
 #include <QWidget>
 #include <osg/Node>
 #include <osg/ref_ptr>
@@ -32,6 +34,7 @@ signals:
     void startRequested(const PathModeConfig& cfg);
     void stopRequested();
     void pathEdited(const PathModeConfig& cfg);
+    void teleportRequested(double x, double y, double z);
 
 private:
     void ensureMapReady();
@@ -44,6 +47,10 @@ private:
     void syncConfigFromTable();
     void updateCanvasWaypoints();
     void setInteractionModeUi(bool add_mode, bool edit_mode);
+    void setDrawerExpanded(bool expanded);
+    void updateFloatingDrawerGeometry();
+protected:
+    void resizeEvent(QResizeEvent* event) override;
 
     osg::ref_ptr<osg::Node> scene_root_;
     QString project_root_;
@@ -51,9 +58,12 @@ private:
     sonar_imaging::TopDownDepthMapGenerator map_generator_;
     PathModeConfig cfg_;
 
+    QVBoxLayout* root_layout_ = nullptr;
     PathMapCanvas* map_canvas_ = nullptr;
     QWidget* editor_panel_ = nullptr;
+    QWidget* drawer_content_ = nullptr;
     QTableWidget* table_ = nullptr;
+    QToolButton* drawer_toggle_btn_ = nullptr;
     QCheckBox* loop_check_ = nullptr;
     QCheckBox* add_mode_check_ = nullptr;
     QCheckBox* edit_mode_check_ = nullptr;

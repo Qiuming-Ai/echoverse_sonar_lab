@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QSet>
 #include <QStringList>
+#include <cmath>
 
 namespace standalone_mvp {
 namespace {
@@ -23,6 +24,19 @@ std::array<double, 6> parsePoseNumbers(const QString& pose_str) {
         pose[static_cast<std::size_t>(i)] = ok ? v : 0.0;
     }
     return pose;
+}
+
+double parseUniformScale(const QString& scale_str) {
+    const QStringList parts = trim(scale_str).simplified().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    if (parts.isEmpty()) {
+        return 1.0;
+    }
+    bool ok = false;
+    const double v = parts[0].toDouble(&ok);
+    if (!ok || !std::isfinite(v) || v <= 0.0) {
+        return 1.0;
+    }
+    return v;
 }
 
 QString poseToString(const std::array<double, 6>& p) {
@@ -96,11 +110,6 @@ bool replaceIncludeSection(QString* xml, const QString& new_include_blocks) {
     return true;
 }
 
-QString formatIncludeBlock(const QString& model_name, const std::array<double, 6>& pose) {
-    return QStringLiteral("    <include>\n      <uri>model://%1</uri>\n      <pose>%2</pose>\n    </include>\n")
-        .arg(model_name, poseToString(pose));
-}
-
 } // namespace
 
 QStringList discoverSdfModelNames(const QString& project_root) {
@@ -162,6 +171,7 @@ bool loadWorldIncludes(const QString& world_file_path, QVector<WorldIncludeEntry
         WorldIncludeEntry ent;
         ent.model_name = uriToModelName(uri);
         ent.pose = parsePoseNumbers(getTagContent(block, QStringLiteral("pose")));
+        ent.scale = parseUniformScale(getTagContent(block, QStringLiteral("scale")));
         out->push_back(ent);
         pos = e + 1;
     }
@@ -180,7 +190,14 @@ bool saveWorldIncludes(const QString& world_file_path, const QVector<WorldInclud
     f.close();
     QString blocks;
     for (const WorldIncludeEntry& ent : entries) {
-        blocks += formatIncludeBlock(ent.model_name, ent.pose);
+        const double s = (std::isfinite(ent.scale) && ent.scale > 0.0) ? ent.scale : 1.0;
+        blocks += QStringLiteral(
+                      "    <include>\n"
+                      "      <uri>model://%1</uri>\n"
+                      "      <pose>%2</pose>\n"
+                      "      <scale>%3 %3 %3</scale>\n"
+                      "    </include>\n")
+                      .arg(ent.model_name, poseToString(ent.pose), QString::number(s, 'g', 12));
     }
     if (!replaceIncludeSection(&xml, blocks)) {
         if (error) {

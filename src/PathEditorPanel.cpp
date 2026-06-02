@@ -71,6 +71,10 @@ public:
         dragging_index_ = -1;
     }
 
+    void setDoubleClickTeleportEnabled(bool enabled) {
+        allow_double_click_pick_ = enabled;
+    }
+
     void setLivePose(double x, double y, double yaw_rad) {
         live_x_ = x;
         live_y_ = y;
@@ -84,6 +88,7 @@ public:
     std::function<void(double x, double y, double z)> onAddPoint;
     std::function<void(int index, double x, double y)> onMovePointXY;
     std::function<void(int index)> onDeletePoint;
+    std::function<void(double x, double y, double z)> onTeleportPoint;
 
 protected:
     void paintEvent(QPaintEvent*) override {
@@ -121,6 +126,7 @@ protected:
             }
         }
         drawLivePose(p);
+        drawHoverPose(p, target);
         p.restore();
 
         drawAxes(p, target);
@@ -174,6 +180,7 @@ protected:
     }
 
     void mouseMoveEvent(QMouseEvent* event) override {
+        updateHoverInfo(event->position());
         if (is_panning_ && map_.valid()) {
             const QRectF target = imageRectInWidget();
             const ViewBounds vb = currentViewBounds();
@@ -201,6 +208,7 @@ protected:
             onMovePointXY(dragging_index_, world.x(), world.y());
         }
         drag_last_pos_ = event->position();
+        update();
     }
 
     void mouseReleaseEvent(QMouseEvent* event) override {
@@ -233,6 +241,29 @@ protected:
         }
         update();
         event->accept();
+    }
+
+    void mouseDoubleClickEvent(QMouseEvent* event) override {
+        if (!map_.valid() || !allow_double_click_pick_ || event->button() != Qt::LeftButton) {
+            QWidget::mouseDoubleClickEvent(event);
+            return;
+        }
+        const QPointF pixel = widgetToImagePixel(event->position());
+        if (pixel.x() < 0.0 || pixel.y() < 0.0 || !map_.hasHitAtPixel(pixel)) {
+            return;
+        }
+        const QPointF world = map_.pixelToWorld(pixel);
+        const double z = map_.sampleZAtPixel(pixel) + 5.0;
+        if (onTeleportPoint) {
+            onTeleportPoint(world.x(), world.y(), z);
+        }
+        event->accept();
+    }
+
+    void leaveEvent(QEvent* event) override {
+        hover_active_ = false;
+        update();
+        QWidget::leaveEvent(event);
     }
 
 private:
@@ -509,9 +540,26 @@ private:
         p.drawPolygon(tri);
     }
 
+    void drawHoverPose(QPainter& p, const QRectF& target) const {
+        if (!hover_active_) {
+            return;
+        }
+        const QRectF box(target.left() + 8.0, target.top() + 8.0, 250.0, 24.0);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 150));
+        p.drawRoundedRect(box, 4.0, 4.0);
+        p.setPen(QColor(210, 230, 250));
+        p.drawText(box.adjusted(8.0, 0.0, -4.0, 0.0), Qt::AlignVCenter | Qt::AlignLeft,
+                   QStringLiteral("X:%1  Y:%2  Z:%3")
+                       .arg(hover_x_, 0, 'f', 2)
+                       .arg(hover_y_, 0, 'f', 2)
+                       .arg(hover_z_, 0, 'f', 2));
+    }
+
     sonar_imaging::TopDownDepthMapResult map_;
     std::vector<PathWaypointConfig> waypoints_;
     bool draw_waypoints_ = true;
+    bool allow_double_click_pick_ = false;
     bool add_mode_ = true;
     bool edit_mode_ = false;
     int dragging_index_ = -1;
@@ -520,6 +568,10 @@ private:
     QPointF pan_last_pos_;
     double zoom_ = 1.0;
     QPointF pan_world_;
+    bool hover_active_ = false;
+    double hover_x_ = 0.0;
+    double hover_y_ = 0.0;
+    double hover_z_ = 0.0;
     bool has_live_pose_ = false;
     double live_x_ = 0.0;
     double live_y_ = 0.0;
@@ -544,28 +596,62 @@ private:
         }
         return best;
     }
+
+    void updateHoverInfo(const QPointF& widget_pos) {
+        hover_active_ = false;
+        if (!map_.valid()) {
+            return;
+        }
+        const QPointF pixel = widgetToImagePixel(widget_pos);
+        if (pixel.x() < 0.0 || pixel.y() < 0.0 || !map_.hasHitAtPixel(pixel)) {
+            return;
+        }
+        const QPointF world = map_.pixelToWorld(pixel);
+        hover_x_ = world.x();
+        hover_y_ = world.y();
+        hover_z_ = map_.sampleZAtPixel(pixel);
+        hover_active_ = true;
+    }
 };
 
 PathEditorPanel::PathEditorPanel(QWidget* parent)
     : QWidget(parent) {
-    auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(8, 8, 8, 8);
-    root->setSpacing(8);
+    root_layout_ = new QVBoxLayout(this);
+    root_layout_->setContentsMargins(8, 8, 8, 8);
+    root_layout_->setSpacing(8);
 
     map_canvas_ = new PathMapCanvas(this);
-    root->addWidget(map_canvas_, 8);
+    root_layout_->addWidget(map_canvas_, 10);
 
     editor_panel_ = new QWidget(this);
     auto* side_layout = new QVBoxLayout(editor_panel_);
     side_layout->setContentsMargins(0, 0, 0, 0);
     side_layout->setSpacing(6);
-    root->addWidget(editor_panel_, 5);
+    root_layout_->addWidget(editor_panel_, 2);
     editor_panel_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
 
-    // auto* title = new QLabel(QStringLiteral("Waypoints (X/Y/Z, speed applies to segment i->i+1)"), editor_panel_);
-    // side_layout->addWidget(title);
+    drawer_toggle_btn_ = new QToolButton(editor_panel_);
+    drawer_toggle_btn_->setText(QStringLiteral("Waypoints"));
+    drawer_toggle_btn_->setCheckable(true);
+    drawer_toggle_btn_->setChecked(true);
+    drawer_toggle_btn_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    drawer_toggle_btn_->setArrowType(Qt::DownArrow);
+    drawer_toggle_btn_->setFixedHeight(24);
+    drawer_toggle_btn_->setStyleSheet(
+        "QToolButton{background:#172635;color:#d7e9fb;border:1px solid #3f5f7c;border-radius:4px;padding:2px 6px;text-align:left;}"
+        "QToolButton:hover{background:#203447;}");
+    side_layout->addWidget(drawer_toggle_btn_);
 
-    table_ = new QTableWidget(editor_panel_);
+    drawer_content_ = new QWidget(editor_panel_);
+    drawer_content_->setVisible(false);
+    drawer_content_->setAttribute(Qt::WA_StyledBackground, true);
+    drawer_content_->setStyleSheet("QWidget{background:rgba(8,16,26,220);border:1px solid #4d6a86;border-radius:6px;}");
+    auto* drawer_layout = new QVBoxLayout(drawer_content_);
+    drawer_layout->setContentsMargins(8, 8, 8, 8);
+    drawer_layout->setSpacing(6);
+    side_layout->addWidget(drawer_content_, 1);
+
+    table_ = new QTableWidget(drawer_content_);
     table_->setColumnCount(4);
     table_->setHorizontalHeaderLabels({QStringLiteral("X"), QStringLiteral("Y"), QStringLiteral("Z"), QStringLiteral("Speed")});
     table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
@@ -578,13 +664,13 @@ PathEditorPanel::PathEditorPanel(QWidget* parent)
     table_->setDragDropMode(QAbstractItemView::InternalMove);
     table_->setDragDropOverwriteMode(false);
     table_->setContextMenuPolicy(Qt::CustomContextMenu);
-    side_layout->addWidget(table_, 1);
+    drawer_layout->addWidget(table_, 1);
 
     auto* mode_row = new QHBoxLayout();
-    add_mode_check_ = new QCheckBox(QStringLiteral("Add"), editor_panel_);
-    edit_mode_check_ = new QCheckBox(QStringLiteral("Edit"), editor_panel_);
-    loop_check_ = new QCheckBox(QStringLiteral("Loop path"), editor_panel_);
-    clear_btn_ = new QPushButton(QStringLiteral("Clear"), editor_panel_);
+    add_mode_check_ = new QCheckBox(QStringLiteral("Add"), drawer_content_);
+    edit_mode_check_ = new QCheckBox(QStringLiteral("Edit"), drawer_content_);
+    loop_check_ = new QCheckBox(QStringLiteral("Loop path"), drawer_content_);
+    clear_btn_ = new QPushButton(QStringLiteral("Clear"), drawer_content_);
     add_mode_check_->setChecked(true);
     mode_row->addWidget(add_mode_check_);
     mode_row->addWidget(edit_mode_check_);
@@ -623,6 +709,9 @@ PathEditorPanel::PathEditorPanel(QWidget* parent)
         refreshTable();
         updateCanvasWaypoints();
         emit pathEdited(cfg_);
+    };
+    map_canvas_->onTeleportPoint = [this](double x, double y, double z) {
+        emit teleportRequested(x, y, z);
     };
 
     QObject::connect(clear_btn_, &QPushButton::clicked, this, [this]() {
@@ -675,8 +764,13 @@ PathEditorPanel::PathEditorPanel(QWidget* parent)
         updateCanvasWaypoints();
         emit pathEdited(cfg_);
     });
+    QObject::connect(drawer_toggle_btn_, &QToolButton::toggled, this, [this](bool on) {
+        setDrawerExpanded(on);
+    });
 
     setInteractionModeUi(true, false);
+    setDrawerExpanded(false);
+    updateFloatingDrawerGeometry();
 }
 
 void PathEditorPanel::setSceneRoot(osg::ref_ptr<osg::Node> scene_root) {
@@ -704,13 +798,20 @@ void PathEditorPanel::setCompactLiveMapMode(bool on) {
     if (editor_panel_) {
         editor_panel_->setVisible(!on);
     }
+    if (root_layout_) {
+        root_layout_->setStretch(0, on ? 1 : 10);
+        root_layout_->setStretch(1, on ? 0 : 2);
+    }
     map_canvas_->setWaypointRenderingEnabled(!on);
+    map_canvas_->setDoubleClickTeleportEnabled(on);
     if (on) {
+        setDrawerExpanded(false);
         map_canvas_->setInteractionMode(false, false);
     } else {
         map_canvas_->setInteractionMode(add_mode_check_ && add_mode_check_->isChecked(),
                                         edit_mode_check_ && edit_mode_check_->isChecked());
     }
+    updateFloatingDrawerGeometry();
 }
 
 void PathEditorPanel::setLivePose(double x, double y, double yaw_rad) {
@@ -886,6 +987,36 @@ void PathEditorPanel::updateCanvasWaypoints() {
 
 void PathEditorPanel::setInteractionModeUi(bool add_mode, bool edit_mode) {
     map_canvas_->setInteractionMode(add_mode, edit_mode);
+}
+
+void PathEditorPanel::setDrawerExpanded(bool expanded) {
+    if (drawer_content_) {
+        drawer_content_->setVisible(expanded);
+    }
+    if (drawer_toggle_btn_) {
+        drawer_toggle_btn_->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+        if (drawer_toggle_btn_->isChecked() != expanded) {
+            QSignalBlocker blocker(drawer_toggle_btn_);
+            drawer_toggle_btn_->setChecked(expanded);
+        }
+    }
+    updateFloatingDrawerGeometry();
+}
+
+void PathEditorPanel::updateFloatingDrawerGeometry() {
+    if (!drawer_content_ || !map_canvas_ || drawer_content_->parentWidget() != map_canvas_) {
+        return;
+    }
+    const int canvas_w = map_canvas_->width();
+    const int canvas_h = map_canvas_->height();
+    const int w = std::clamp(canvas_w - 28, 320, 560);
+    const int h = std::clamp(canvas_h / 2, 180, 360);
+    drawer_content_->setGeometry(canvas_w - w - 14, 14, w, h);
+}
+
+void PathEditorPanel::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    updateFloatingDrawerGeometry();
 }
 
 } // namespace standalone_mvp

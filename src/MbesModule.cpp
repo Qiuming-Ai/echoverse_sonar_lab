@@ -25,9 +25,70 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 
 namespace {
+
+double computeYawDeg(const Eigen::Vector3d& forward) {
+    return std::atan2(forward.y(), forward.x()) * 180.0 / M_PI;
+}
+
+double computePitchDeg(const Eigen::Vector3d& forward) {
+    const double horiz = std::hypot(forward.x(), forward.y());
+    return std::atan2(forward.z(), horiz) * 180.0 / M_PI;
+}
+
+standalone_mvp::Esl2dPoseSnapshot poseFromAffine(const Eigen::Affine3d& pose) {
+    standalone_mvp::Esl2dPoseSnapshot out;
+    out.x = pose.translation().x();
+    out.y = pose.translation().y();
+    out.z = pose.translation().z();
+    Eigen::Vector3d forward = pose.linear().col(0);
+    if (forward.norm() > 1e-10) {
+        forward.normalize();
+    } else {
+        forward = Eigen::Vector3d::UnitX();
+    }
+    out.yaw_deg = computeYawDeg(forward);
+    out.pitch_deg = computePitchDeg(forward);
+    const Eigen::Quaterniond q(pose.linear());
+    out.quat_w = q.w();
+    out.quat_x = q.x();
+    out.quat_y = q.y();
+    out.quat_z = q.z();
+    return out;
+}
+
+bool esl2dOutputEnabled(bool config_enabled) {
+    return config_enabled || (std::getenv("STANDALONE_ESL2D_OUTPUT") != nullptr);
+}
+
+QJsonObject mbesSonarConfigJson(const standalone_mvp::SonarConfigUi& cfg) {
+    QJsonObject o;
+    o["range_m"] = cfg.range_m;
+    o["gain"] = cfg.gain;
+    o["center_frequency_khz"] = cfg.center_frequency_khz;
+    o["bandwidth_khz"] = cfg.bandwidth_khz;
+    o["beam_width_deg"] = cfg.beam_width_deg;
+    o["beam_height_deg"] = cfg.beam_height_deg;
+    o["angular_resolution_deg"] = cfg.angular_resolution_deg;
+    o["beam_count"] = cfg.beam_count;
+    o["bin_count"] = cfg.bin_count;
+    return o;
+}
+
+QJsonObject environmentConfigJson(const standalone_mvp::EnvironmentConfig& cfg) {
+    QJsonObject o;
+    o["temperature_c"] = cfg.temperature_c;
+    o["salinity_ppt"] = cfg.salinity_ppt;
+    o["acidity_ph"] = cfg.acidity_ph;
+    o["enable_reverb"] = cfg.enable_reverb;
+    o["enable_speckle"] = cfg.enable_speckle;
+    o["enable_attenuation"] = cfg.enable_attenuation;
+    o["sound_speed_mps"] = cfg.sound_speed_mps;
+    return o;
+}
 
 unsigned int computeDerivedBinCount(const standalone_mvp::SonarConfigUi& s) {
     const double bandwidth_hz = std::max(1.0, s.bandwidth_khz * 1000.0);
@@ -232,7 +293,11 @@ void MbesModule::setupWidget(DockWorkspace* workspace, const QString& title) {
         module_cfg.mbes_config.bandwidth_khz,
         module_cfg.mbes_config.beam_width_deg,
         module_cfg.mbes_config.beam_height_deg,
-        module_cfg.mbes_config.angular_resolution_deg);
+        module_cfg.mbes_config.angular_resolution_deg,
+        module_cfg.mbes_config.tcp_output_enabled,
+        module_cfg.mbes_config.file_output_enabled,
+        module_cfg.mbes_config.tcp_host,
+        module_cfg.mbes_config.tcp_port);
     rock_sonar_ui->setSonarPalette(1);
 }
 
@@ -249,7 +314,11 @@ void MbesModule::connectWidgetSignals() {
                double bandwidth_khz,
                double beam_width_deg,
                double beam_height_deg,
-               double angle_resolution_deg) {
+               double angle_resolution_deg,
+               bool tcp_output_enabled,
+               bool file_output_enabled,
+               const QString& tcp_host,
+               int tcp_port) {
             const double safe_range_m = std::clamp(range_m, 0.1, 500.0);
             const double safe_gain = std::clamp(gain, 0.0, 1.0);
             const double safe_center_frequency_khz = std::clamp(center_frequency_khz, 1.0, 2000.0);
@@ -272,6 +341,11 @@ void MbesModule::connectWidgetSignals() {
             module_cfg.mbes_config.angular_resolution_deg = safe_angle_resolution_deg;
             module_cfg.mbes_config.bin_count = static_cast<int>(computeDerivedBinCount(module_cfg.mbes_config));
             module_cfg.mbes_config.beam_count = static_cast<int>(computeDerivedBeamCount(module_cfg.mbes_config));
+            module_cfg.mbes_config.tcp_output_enabled = tcp_output_enabled;
+            module_cfg.mbes_config.file_output_enabled = file_output_enabled;
+            module_cfg.mbes_config.tcp_host = tcp_host.trimmed().isEmpty() ? QStringLiteral("0.0.0.0") : tcp_host.trimmed();
+            module_cfg.mbes_config.tcp_port = std::clamp(tcp_port, 1, 65535);
+            applyEsl2dOutputRuntime();
 
             if (sonar) {
                 sonar->setRange(runtime_range_m);
@@ -284,6 +358,27 @@ void MbesModule::connectWidgetSignals() {
                     sonar_types_v2::Angle::fromDeg(static_cast<float>(module_cfg.mbes_config.beam_height_deg)));
             }
         });
+}
+
+void MbesModule::applyEsl2dOutputRuntime() {
+    if (esl2d_project_dir_.isEmpty()) {
+        return;
+    }
+    const auto& c = module_cfg.mbes_config;
+    const bool file_on = esl2dOutputEnabled(c.file_output_enabled);
+    const QString path =
+        standalone_mvp::buildEsl2dOutputPath(esl2d_project_dir_, module_cfg.name, QStringLiteral("mbes"));
+    esl2d_file_writer_.applyConfig(
+        c.tcp_output_enabled,
+        c.tcp_host.toStdString(),
+        static_cast<std::uint16_t>(std::clamp(c.tcp_port, 1, 65535)),
+        file_on,
+        path.toStdString());
+}
+
+void MbesModule::initEsl2dRecording(const QString& project_dir) {
+    esl2d_project_dir_ = project_dir;
+    applyEsl2dOutputRuntime();
 }
 
 bool MbesModule::tick(const Eigen::Affine3d& pose,
@@ -307,6 +402,16 @@ bool MbesModule::tick(const Eigen::Affine3d& pose,
     standalone_mvp::validateSonarSample(sample);
     if (rock_sonar_ui && (frame_index % std::max(1, image_update_stride)) == 0) {
         rock_sonar_ui->setData(sample);
+    }
+    if (esl2d_file_writer_.outputEnabled()) {
+        standalone_mvp::Esl2dWriteParams params;
+        params.sonar_kind = standalone_mvp::Esl2dSonarKind::FLS;
+        params.max_range_m = runtime_range_m;
+        params.pose = poseFromAffine(pose);
+        params.sonar_config = mbesSonarConfigJson(module_cfg.mbes_config);
+        params.environment = environmentConfigJson(env_cfg);
+        params.sonar_module_name = module_cfg.name;
+        esl2d_file_writer_.writeFlsFrame(sample, params);
     }
     if (out_sample) {
         *out_sample = sample;

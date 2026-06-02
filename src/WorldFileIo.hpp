@@ -10,6 +10,7 @@ namespace standalone_mvp {
 struct WorldIncludeEntry {
     QString model_name;
     std::array<double, 6> pose{};
+    double scale = 1.0;
 };
 
 /// Subdirectories of `uwmodels/sdf` that contain `model.sdf`.

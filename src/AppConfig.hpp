@@ -66,6 +66,10 @@ struct SonarConfigUi {
     // Whether to run the 2D FLS depth-composer sonar image pipeline.
     // When disabled, only optional 3D point-cloud sonar (if enabled) will run.
     bool enable_2d_fls = true;
+    bool tcp_output_enabled = false;
+    bool file_output_enabled = false;
+    QString tcp_host = "0.0.0.0";
+    int tcp_port = 30001;
     double max_fps = 20.0;
     double viewer_max_fps = 60.0;
     double sound_speed_mps = 1500.0;
@@ -137,6 +141,10 @@ struct SideScanSonarConfigUi {
     int window_width = 960;
     int window_height = 320;
     int update_stride = 2;
+    bool tcp_output_enabled = false;
+    bool file_output_enabled = false;
+    QString tcp_host = "0.0.0.0";
+    int tcp_port = 30002;
 };
 
 struct PointCloudSonarConfigUi {
@@ -191,12 +199,15 @@ struct AppConfigData {
 
     // UI layout persistence.
     bool sonar_window_docked_in_main = true;
-    QString sonar_workspace_split_layout = "single"; // single/horizontal/vertical/quad
+    QString sonar_workspace_split_layout = "single"; // single/horizontal/vertical/one_by_three/quad
     QStringList sonar_workspace_single_tabs;
     QStringList sonar_workspace_horizontal_left_tabs;
     QStringList sonar_workspace_horizontal_right_tabs;
     QStringList sonar_workspace_vertical_top_tabs;
     QStringList sonar_workspace_vertical_bottom_tabs;
+    QStringList sonar_workspace_13_left_tabs;
+    QStringList sonar_workspace_13_center_tabs;
+    QStringList sonar_workspace_13_right_tabs;
     QStringList sonar_workspace_quad_top_left_tabs;
     QStringList sonar_workspace_quad_top_right_tabs;
     QStringList sonar_workspace_quad_bottom_left_tabs;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AppConfig.hpp"
+#include "Esl2dFileWriter.hpp"
 #include "PointCloudSonarSimulation.hpp"
 #include "PointCloudTcpStreamer.hpp"
 
@@ -55,6 +56,8 @@ public:
     void tickPointCloud(const Eigen::Affine3d& pose);
     void setupWidget(DockWorkspace* workspace, const QString& title);
     void connectWidgetSignals();
+    void initEsl2dRecording(const QString& project_dir);
+    void applyEsl2dOutputRuntime();
     bool tick(const Eigen::Affine3d& pose,
               int frame_index,
               int image_update_stride,
@@ -65,8 +68,10 @@ public:
     std::unique_ptr<standalone_mvp::PointCloudSonarSimulation> point_cloud_sim;
     QPointer<standalone_mvp::PointCloudViewerWindow> point_cloud_window;
     standalone_mvp::PointCloudTcpStreamer point_cloud_tcp_streamer;
+    standalone_mvp::Esl2dFileWriter esl2d_file_writer_;
     standalone_mvp::PointCloudSonarConfig point_cloud_cfg_runtime;
     QString point_cloud_project_dir_;
+    QString esl2d_project_dir_;
     QString point_cloud_sonar_json_path_;
     bool point_cloud_runtime_enabled = false;
     float runtime_range_m = 0.0f;

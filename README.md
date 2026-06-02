@@ -76,7 +76,7 @@ Common executables after build:
 
 ## Documentation
 
-- TCP protocol: `docs/sonar_pointcloud_tcp_protocol.md`
+- TCP protocol: `docs/sonar_tcp_protocol.md`
 - ESL3D format: `docs/esl3d_file_format.md`
 - H5 data spec: `docs/sonar_h5_data_spec.md`
 - Model loading and custom assets: `docs/model_loading_and_custom_assets.md`

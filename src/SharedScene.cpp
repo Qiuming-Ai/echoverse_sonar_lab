@@ -104,6 +104,7 @@ struct SceneModel {
     osg::Vec4 fallback_color;
     bool fallback_is_plane;
     bool visible = true;
+    double uniform_scale = 1.0;
 };
 
 struct SceneSpec {
@@ -114,6 +115,7 @@ struct SceneSpec {
 struct WorldInclude {
     std::string model_name;
     std::array<double, 6> pose_xyzrpy{0, 0, 0, 0, 0, 0};
+    double uniform_scale = 1.0;
 };
 
 osg::ref_ptr<osg::Node> createFallbackNode(float range_m, const SceneModel& model) {
@@ -229,6 +231,19 @@ std::array<double, 6> parsePose(const std::string& pose_str) {
     return pose;
 }
 
+double parseUniformScale(const std::string& scale_str) {
+    if (scale_str.empty()) {
+        return 1.0;
+    }
+    std::stringstream ss(scale_str);
+    double s0 = 1.0;
+    ss >> s0;
+    if (ss.fail() || !std::isfinite(s0) || s0 <= 0.0) {
+        return 1.0;
+    }
+    return s0;
+}
+
 std::string uriToModelName(const std::string& uri) {
     const std::string prefix = "model://";
     if (uri.rfind(prefix, 0) == 0) {
@@ -292,6 +307,7 @@ std::optional<std::vector<WorldInclude>> parseWorldIncludes(const std::string& w
         }
         inc.model_name = uriToModelName(uri);
         inc.pose_xyzrpy = parsePose(getTagContent(block, "pose"));
+        inc.uniform_scale = parseUniformScale(getTagContent(block, "scale"));
         includes.push_back(inc);
         pos = e + 1;
     }
@@ -1103,6 +1119,7 @@ SceneSpec loadSceneFromWorld(const std::string& world_name) {
         model.primitive_plane_size = std::nullopt;
         model.material = ParsedMaterial{};
         model.pose_xyzrpy = inc.pose_xyzrpy;
+        model.uniform_scale = inc.uniform_scale;
         model.fallback_color = osg::Vec4(0.3f + 0.1f * static_cast<float>(i % 3), 0.45f, 0.55f, 1.0f);
         model.fallback_is_plane = (inc.model_name == "seafloor");
         if (geometry.is_light_only) {
@@ -1117,13 +1134,14 @@ SceneSpec loadSceneFromWorld(const std::string& world_name) {
         for (const auto& g : geometry.geometries) {
             SceneModel item = model;
             item.pose_xyzrpy = {
-                inc.pose_xyzrpy[0] + geometry.local_pose_xyzrpy[0] + g.local_pose_xyzrpy[0],
-                inc.pose_xyzrpy[1] + geometry.local_pose_xyzrpy[1] + g.local_pose_xyzrpy[1],
-                inc.pose_xyzrpy[2] + geometry.local_pose_xyzrpy[2] + g.local_pose_xyzrpy[2],
+                inc.pose_xyzrpy[0] + (geometry.local_pose_xyzrpy[0] + g.local_pose_xyzrpy[0]) * inc.uniform_scale,
+                inc.pose_xyzrpy[1] + (geometry.local_pose_xyzrpy[1] + g.local_pose_xyzrpy[1]) * inc.uniform_scale,
+                inc.pose_xyzrpy[2] + (geometry.local_pose_xyzrpy[2] + g.local_pose_xyzrpy[2]) * inc.uniform_scale,
                 inc.pose_xyzrpy[3] + geometry.local_pose_xyzrpy[3] + g.local_pose_xyzrpy[3],
                 inc.pose_xyzrpy[4] + geometry.local_pose_xyzrpy[4] + g.local_pose_xyzrpy[4],
                 inc.pose_xyzrpy[5] + geometry.local_pose_xyzrpy[5] + g.local_pose_xyzrpy[5]
             };
+            item.uniform_scale = inc.uniform_scale;
             item.fallback_color = g.color;
             item.mesh_path = g.mesh_path;
             item.primitive_box_size = g.primitive_box_size;
@@ -1155,7 +1173,8 @@ void appendSceneModelsToGroup(osg::Group* parent, float range_m, const SceneSpec
                 osg::Matrixd::translate(model.pose_xyzrpy[0], model.pose_xyzrpy[1], model.pose_xyzrpy[2]) *
                 osg::Matrixd::rotate(model.pose_xyzrpy[5], osg::Vec3d(0.0, 0.0, 1.0)) *
                 osg::Matrixd::rotate(model.pose_xyzrpy[4], osg::Vec3d(0.0, 1.0, 0.0)) *
-                osg::Matrixd::rotate(model.pose_xyzrpy[3], osg::Vec3d(1.0, 0.0, 0.0));
+                osg::Matrixd::rotate(model.pose_xyzrpy[3], osg::Vec3d(1.0, 0.0, 0.0)) *
+                osg::Matrixd::scale(model.uniform_scale, model.uniform_scale, model.uniform_scale);
             xform->setMatrix(matrix);
             xform->addChild(node);
             parent->addChild(xform);
@@ -1167,7 +1186,8 @@ void appendSceneModelsToGroup(osg::Group* parent, float range_m, const SceneSpec
             osg::Matrixd::translate(model.pose_xyzrpy[0], model.pose_xyzrpy[1], model.pose_xyzrpy[2]) *
             osg::Matrixd::rotate(model.pose_xyzrpy[5], osg::Vec3d(0.0, 0.0, 1.0)) *
             osg::Matrixd::rotate(model.pose_xyzrpy[4], osg::Vec3d(0.0, 1.0, 0.0)) *
-            osg::Matrixd::rotate(model.pose_xyzrpy[3], osg::Vec3d(1.0, 0.0, 0.0));
+            osg::Matrixd::rotate(model.pose_xyzrpy[3], osg::Vec3d(1.0, 0.0, 0.0)) *
+            osg::Matrixd::scale(model.uniform_scale, model.uniform_scale, model.uniform_scale);
         xform->setMatrix(matrix);
         xform->addChild(node);
         if (!model.visible) {

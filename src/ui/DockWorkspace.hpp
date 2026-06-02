@@ -18,6 +18,7 @@ public:
         Horizontal,
         Vertical,
         Quad,
+        OneByThree,
     };
 
     explicit DockWorkspace(QWidget* parent = nullptr);
@@ -40,12 +41,15 @@ public:
     QStringList singlePaneTabTitles() const;
     QPair<QStringList, QStringList> horizontalPaneTabTitles() const;
     QPair<QStringList, QStringList> verticalPaneTabTitles() const;
+    QList<QStringList> oneByThreePaneTabTitles() const;
     void quadPaneTabTitles(
         QStringList& top_left, QStringList& top_right,
         QStringList& bottom_left, QStringList& bottom_right) const;
     void restoreSinglePaneTabTitles(const QStringList& single_titles);
     void restoreHorizontalPaneTabTitles(const QStringList& left_titles, const QStringList& right_titles);
     void restoreVerticalPaneTabTitles(const QStringList& top_titles, const QStringList& bottom_titles);
+    void restoreOneByThreePaneTabTitles(
+        const QStringList& left_titles, const QStringList& center_titles, const QStringList& right_titles);
     void restoreQuadPaneTabTitles(
         const QStringList& top_left_titles, const QStringList& top_right_titles,
         const QStringList& bottom_left_titles, const QStringList& bottom_right_titles);
@@ -61,6 +65,7 @@ private:
         Horizontal,
         Vertical,
         Quad,
+        OneByThree,
     };
 
     enum class SplitSide {
@@ -77,6 +82,7 @@ private:
     void setRootWidget(QWidget* root_widget);
     QWidget* buildHorizontalLayout();
     QWidget* buildVerticalLayout();
+    QWidget* buildOneByThreeLayout();
     QWidget* buildQuadLayout();
     void clearRootWidget();
     void moveAllTabs(DockPane* from, DockPane* to);
@@ -108,6 +114,9 @@ private:
     DockPane* pane_lr_right_ = nullptr;
     DockPane* pane_tb_top_ = nullptr;
     DockPane* pane_tb_bottom_ = nullptr;
+    DockPane* pane_13_left_ = nullptr;
+    DockPane* pane_13_center_ = nullptr;
+    DockPane* pane_13_right_ = nullptr;
     DockPane* pane_q_tl_ = nullptr;
     DockPane* pane_q_tr_ = nullptr;
     DockPane* pane_q_bl_ = nullptr;

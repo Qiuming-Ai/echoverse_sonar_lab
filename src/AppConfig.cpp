@@ -285,6 +285,10 @@ QJsonObject sonarConfigToJson(const SonarConfigUi& cfg) {
     sonar["enable_speckle"] = cfg.enable_speckle;
     sonar["enable_attenuation"] = cfg.enable_attenuation;
     sonar["enable_2d_fls"] = cfg.enable_2d_fls;
+    sonar["tcp_output_enabled"] = cfg.tcp_output_enabled;
+    sonar["file_output_enabled"] = cfg.file_output_enabled;
+    sonar["tcp_host"] = cfg.tcp_host;
+    sonar["tcp_port"] = cfg.tcp_port;
     sonar["max_fps"] = cfg.max_fps;
     sonar["viewer_max_fps"] = cfg.viewer_max_fps;
     sonar["sound_speed_mps"] = cfg.sound_speed_mps;
@@ -335,6 +339,14 @@ SonarConfigUi sonarConfigFromJson(const QJsonObject& sonar, SonarConfigUi cfg) {
     cfg.enable_speckle = readBool(sonar, "enable_speckle", cfg.enable_speckle);
     cfg.enable_attenuation = readBool(sonar, "enable_attenuation", cfg.enable_attenuation);
     cfg.enable_2d_fls = readBool(sonar, "enable_2d_fls", cfg.enable_2d_fls);
+    cfg.tcp_output_enabled = readBool(sonar, "tcp_output_enabled", cfg.tcp_output_enabled);
+    if (sonar.contains("file_output_enabled")) {
+        cfg.file_output_enabled = readBool(sonar, "file_output_enabled", cfg.file_output_enabled);
+    } else {
+        cfg.file_output_enabled = readBool(sonar, "esl2d_file_output_enabled", cfg.file_output_enabled);
+    }
+    cfg.tcp_host = readString(sonar, "tcp_host", cfg.tcp_host);
+    cfg.tcp_port = std::clamp(readInt(sonar, "tcp_port", cfg.tcp_port), 1, 65535);
     cfg.max_fps = std::clamp(readDouble(sonar, "max_fps", cfg.max_fps), 1.0, 240.0);
     cfg.viewer_max_fps = std::clamp(readDouble(sonar, "viewer_max_fps", cfg.viewer_max_fps), 1.0, 240.0);
     cfg.sound_speed_mps = std::clamp(readDouble(sonar, "sound_speed_mps", cfg.sound_speed_mps), 1000.0, 1800.0);
@@ -354,6 +366,10 @@ QJsonObject sideScanConfigToJson(const SideScanSonarConfigUi& cfg) {
     o["window_width"] = cfg.window_width;
     o["window_height"] = cfg.window_height;
     o["update_stride"] = cfg.update_stride;
+    o["tcp_output_enabled"] = cfg.tcp_output_enabled;
+    o["file_output_enabled"] = cfg.file_output_enabled;
+    o["tcp_host"] = cfg.tcp_host;
+    o["tcp_port"] = cfg.tcp_port;
     return o;
 }
 
@@ -369,6 +385,14 @@ SideScanSonarConfigUi sideScanConfigFromJson(const QJsonObject& o, SideScanSonar
     cfg.window_width = std::clamp(readInt(o, "window_width", cfg.window_width), 320, 4096);
     cfg.window_height = std::clamp(readInt(o, "window_height", cfg.window_height), 120, 2160);
     cfg.update_stride = std::clamp(readInt(o, "update_stride", cfg.update_stride), 1, 30);
+    cfg.tcp_output_enabled = readBool(o, "tcp_output_enabled", cfg.tcp_output_enabled);
+    if (o.contains("file_output_enabled")) {
+        cfg.file_output_enabled = readBool(o, "file_output_enabled", cfg.file_output_enabled);
+    } else {
+        cfg.file_output_enabled = readBool(o, "esl2d_file_output_enabled", cfg.file_output_enabled);
+    }
+    cfg.tcp_host = readString(o, "tcp_host", cfg.tcp_host);
+    cfg.tcp_port = std::clamp(readInt(o, "tcp_port", cfg.tcp_port), 1, 65535);
     return cfg;
 }
 
@@ -510,6 +534,9 @@ QJsonObject toJson(const AppConfigData& cfg) {
     ui_layout["sonar_workspace_horizontal_right_tabs"] = stringListToJson(cfg.sonar_workspace_horizontal_right_tabs);
     ui_layout["sonar_workspace_vertical_top_tabs"] = stringListToJson(cfg.sonar_workspace_vertical_top_tabs);
     ui_layout["sonar_workspace_vertical_bottom_tabs"] = stringListToJson(cfg.sonar_workspace_vertical_bottom_tabs);
+    ui_layout["sonar_workspace_13_left_tabs"] = stringListToJson(cfg.sonar_workspace_13_left_tabs);
+    ui_layout["sonar_workspace_13_center_tabs"] = stringListToJson(cfg.sonar_workspace_13_center_tabs);
+    ui_layout["sonar_workspace_13_right_tabs"] = stringListToJson(cfg.sonar_workspace_13_right_tabs);
     ui_layout["sonar_workspace_quad_top_left_tabs"] = stringListToJson(cfg.sonar_workspace_quad_top_left_tabs);
     ui_layout["sonar_workspace_quad_top_right_tabs"] = stringListToJson(cfg.sonar_workspace_quad_top_right_tabs);
     ui_layout["sonar_workspace_quad_bottom_left_tabs"] = stringListToJson(cfg.sonar_workspace_quad_bottom_left_tabs);
@@ -633,6 +660,9 @@ AppConfigData fromJson(const QJsonObject& root) {
     cfg.sonar_workspace_horizontal_right_tabs = stringListFromJson(ui_layout, "sonar_workspace_horizontal_right_tabs");
     cfg.sonar_workspace_vertical_top_tabs = stringListFromJson(ui_layout, "sonar_workspace_vertical_top_tabs");
     cfg.sonar_workspace_vertical_bottom_tabs = stringListFromJson(ui_layout, "sonar_workspace_vertical_bottom_tabs");
+    cfg.sonar_workspace_13_left_tabs = stringListFromJson(ui_layout, "sonar_workspace_13_left_tabs");
+    cfg.sonar_workspace_13_center_tabs = stringListFromJson(ui_layout, "sonar_workspace_13_center_tabs");
+    cfg.sonar_workspace_13_right_tabs = stringListFromJson(ui_layout, "sonar_workspace_13_right_tabs");
     cfg.sonar_workspace_quad_top_left_tabs = stringListFromJson(ui_layout, "sonar_workspace_quad_top_left_tabs");
     cfg.sonar_workspace_quad_top_right_tabs = stringListFromJson(ui_layout, "sonar_workspace_quad_top_right_tabs");
     cfg.sonar_workspace_quad_bottom_left_tabs = stringListFromJson(ui_layout, "sonar_workspace_quad_bottom_left_tabs");
