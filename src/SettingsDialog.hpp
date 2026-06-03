@@ -56,6 +56,7 @@ private:
     QCheckBox* enable_reverb_;
     QCheckBox* enable_speckle_;
     QCheckBox* enable_attenuation_;
+    QCheckBox* enable_antialiasing_;
     QCheckBox* enable_2d_fls_;
     QDoubleSpinBox* max_fps_;
     QDoubleSpinBox* viewer_max_fps_;
@@ -134,6 +135,7 @@ private:
     QDialog* mbes_dialog_;
     QDialog* side_scan_dialog_;
 
+    QCheckBox* generate_raw_waveform_;
     QTableWidget* file_output_table_;
     QTableWidget* tcp_output_table_;
 

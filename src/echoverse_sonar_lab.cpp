@@ -17,6 +17,7 @@
 #include "PathEditorPanel.hpp"
 #include "PathFollower.hpp"
 #include "OutputController.hpp"
+#include "ReplayMode.hpp"
 #include "SonarOutputUtil.hpp"
 #include "StartupProgressDialog.hpp"
 
@@ -26,16 +27,21 @@
 #include <QDialog>
 #include <QDir>
 #include <QFileInfo>
+#include <QFile>
+#include <QFileDialog>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QSlider>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPixmap>
 #include <QProcess>
 #include <QPushButton>
+#include <QSplitter>
+#include <QTabWidget>
 #include <QObject>
 #include <QString>
 #include <QTimer>
@@ -54,6 +60,7 @@
 #include <osg/CopyOp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/videoio.hpp>
 #include <osg/Camera>
 #include <osg/Geode>
 #include <osg/Geometry>
@@ -1196,6 +1203,7 @@ int main(int argc, char** argv) {
     QPushButton settings_button("Settings", &dashboard_window);
     QPushButton scene_editor_button("Scene Editor", &dashboard_window);
     QPushButton operation_guide_button(QStringLiteral("Operation Guide"), &dashboard_window);
+    QPushButton replay_mode_button(QStringLiteral("Replay Mode"), &dashboard_window);
     QPushButton path_mode_button("Path Mode", &dashboard_window);
     QPushButton path_start_button("Start", &dashboard_window);
     QPushButton path_stop_button("Stop", &dashboard_window);
@@ -1211,6 +1219,9 @@ int main(int argc, char** argv) {
     operation_guide_button.setStyleSheet(
         "QPushButton{background:#146b8c;color:#ffffff;border:1px solid #85d0ea;border-radius:6px;padding:6px 12px;font-weight:600;}"
         "QPushButton:hover{background:#1b84ad;}");
+    replay_mode_button.setStyleSheet(
+        "QPushButton{background:#7b5a18;color:#ffffff;border:1px solid #e4c67f;border-radius:6px;padding:6px 12px;font-weight:600;}"
+        "QPushButton:hover{background:#9b7422;}");
     path_mode_button.setStyleSheet(
         "QPushButton{background:#5a3f78;color:#ffffff;border:1px solid #b79ad9;border-radius:6px;padding:6px 12px;font-weight:600;}"
         "QPushButton:hover{background:#6f5292;}");
@@ -1223,6 +1234,7 @@ int main(int argc, char** argv) {
     top_bar->addWidget(&sonar_dock_button, 0, Qt::AlignRight);
     top_bar->addWidget(&scene_editor_button, 0, Qt::AlignRight);
     top_bar->addWidget(&operation_guide_button, 0, Qt::AlignRight);
+    top_bar->addWidget(&replay_mode_button, 0, Qt::AlignRight);
     top_bar->addWidget(&path_mode_button, 0, Qt::AlignRight);
     top_bar->addWidget(&path_start_button, 0, Qt::AlignRight);
     top_bar->addWidget(&path_stop_button, 0, Qt::AlignRight);
@@ -1386,6 +1398,183 @@ int main(int argc, char** argv) {
     }
     scene_editor_dialog_layout->addWidget(scene_editor);
     auto* operation_guide_dialog = new standalone_mvp::OperationGuideDialog(&dashboard_window);
+    QWidget replay_window;
+    replay_window.setWindowTitle(QStringLiteral("EchoVerse Sonar Replay"));
+    replay_window.resize(1440, 860);
+    replay_window.setAttribute(Qt::WA_QuitOnClose, false);
+    replay_window.setStyleSheet("QWidget{background:#10151f;color:#e6f0ff;}");
+    auto* replay_layout = new QVBoxLayout(&replay_window);
+    replay_layout->setContentsMargins(8, 8, 8, 8);
+    replay_layout->setSpacing(8);
+    auto* replay_ctrl = new QHBoxLayout();
+    auto* replay_play_pause_btn = new QPushButton(QStringLiteral("Pause"), &replay_window);
+    auto* replay_dock_button = new QPushButton(QStringLiteral("Pop Out Replay"), &replay_window);
+    auto* replay_slider = new QSlider(Qt::Horizontal, &replay_window);
+    auto* replay_time_label = new QLabel(QStringLiteral("0 / 0"), &replay_window);
+    replay_slider->setRange(0, 0);
+    replay_ctrl->addWidget(replay_play_pause_btn);
+    replay_ctrl->addWidget(replay_dock_button);
+    replay_ctrl->addWidget(replay_slider, 1);
+    replay_ctrl->addWidget(replay_time_label);
+    replay_layout->addLayout(replay_ctrl);
+    auto* replay_split = new QSplitter(Qt::Vertical, &replay_window);
+    auto* replay_dock_panel = new QWidget(replay_split);
+    replay_dock_panel->setStyleSheet("QWidget{background:#1a2230;color:#e6f0ff;border:1px solid #35506b;}");
+    auto* replay_dock_layout = new QVBoxLayout(replay_dock_panel);
+    replay_dock_layout->setContentsMargins(4, 4, 4, 4);
+    replay_dock_layout->setSpacing(0);
+    auto* replay_workspace = new DockWorkspace(replay_dock_panel);
+    replay_dock_layout->addWidget(replay_workspace, 1);
+    replay_split->addWidget(replay_dock_panel);
+    replay_split->setStretchFactor(0, 1);
+    replay_layout->addWidget(replay_split, 1);
+    QWidget replay_floating_window;
+    replay_floating_window.setWindowTitle(QStringLiteral("EchoVerse Sonar Replay - Tabs"));
+    replay_floating_window.resize(1200, 760);
+    replay_floating_window.setAttribute(Qt::WA_QuitOnClose, false);
+    replay_floating_window.setStyleSheet(QStringLiteral("QWidget{background:#1a2230;color:#e6f0ff;}"));
+    auto* replay_floating_layout = new QVBoxLayout(&replay_floating_window);
+    replay_floating_layout->setContentsMargins(4, 4, 4, 4);
+    replay_floating_layout->setSpacing(0);
+    QLabel* replay_fls_label = nullptr;
+    QLabel* replay_sss_label = nullptr;
+    standalone_mvp::PointCloudViewerWindow* replay_pc_viewer = nullptr;
+    QLabel* replay_3d_intensity_label = nullptr;
+    QLabel* replay_3d_range_label = nullptr;
+    auto styleReplayImageLabel = [](QLabel* lb) {
+        if (!lb) {
+            return;
+        }
+        lb->setAlignment(Qt::AlignCenter);
+        lb->setMinimumSize(320, 220);
+        lb->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        lb->setStyleSheet(QStringLiteral("QLabel{background:#10151f;border:1px solid #3f6c95;}"));
+    };
+    std::unique_ptr<cv::VideoCapture> replay_fls_cap;
+    std::unique_ptr<cv::VideoCapture> replay_intensity_cap;
+    std::unique_ptr<cv::VideoCapture> replay_range_cap;
+    replay_mode::ReplayConversionResult replay_conversion;
+    int replay_frame_index = 0;
+    int replay_max_frame = 0;
+    bool replay_playing = true;
+    bool replay_mode_active = false;
+    bool replay_pc_config_applied = false;
+    enum class ReplayWindowMode {
+        Docked = 0,
+        Floating,
+    };
+    ReplayWindowMode replay_window_mode = ReplayWindowMode::Docked;
+    auto move_replay_workspace_to_dock = [&]() {
+        replay_workspace->setParent(replay_dock_panel);
+        replay_dock_layout->addWidget(replay_workspace, 1);
+        replay_dock_panel->setVisible(true);
+        replay_window_mode = ReplayWindowMode::Docked;
+        replay_dock_button->setText(QStringLiteral("Pop Out Replay"));
+    };
+    auto move_replay_workspace_to_floating = [&]() {
+        replay_workspace->setParent(&replay_floating_window);
+        replay_floating_layout->addWidget(replay_workspace, 1);
+        replay_dock_panel->setVisible(false);
+        replay_window_mode = ReplayWindowMode::Floating;
+        replay_dock_button->setText(QStringLiteral("Dock Replay"));
+    };
+    QTimer replay_timer(&dashboard_window);
+    replay_timer.setInterval(40);
+    auto show_mat_on_label = [](const cv::Mat& bgr, QLabel* label) {
+        if (bgr.empty() || !label) {
+            return;
+        }
+        cv::Mat rgb;
+        cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
+        const QImage img(rgb.data, rgb.cols, rgb.rows, static_cast<int>(rgb.step), QImage::Format_RGB888);
+        label->setAlignment(Qt::AlignCenter);
+        label->setPixmap(QPixmap::fromImage(img.copy()).scaled(
+            label->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    };
+    auto replay_seek = [&](int frame_index) {
+        replay_frame_index = std::clamp(frame_index, 0, std::max(0, replay_max_frame));
+        const int pc_frame_idx = replay_mode::mapReplaySourceFrame(
+            replay_frame_index,
+            replay_max_frame,
+            static_cast<int>(replay_conversion.esl3d_frame_offsets.size()));
+        const auto replay_3d_tab_active = [&]() -> bool {
+            if (!replay_pc_viewer || !replay_workspace) {
+                return false;
+            }
+            QTabWidget* tabs = replay_workspace->primaryTabWidget();
+            if (!tabs) {
+                return false;
+            }
+            QWidget* page = replay_pc_viewer->parentWidget();
+            return page && tabs->currentWidget() == page;
+        };
+        if (replay_fls_cap) replay_fls_cap->set(cv::CAP_PROP_POS_FRAMES, replay_frame_index);
+        if (replay_intensity_cap) replay_intensity_cap->set(cv::CAP_PROP_POS_FRAMES, pc_frame_idx);
+        if (replay_range_cap) replay_range_cap->set(cv::CAP_PROP_POS_FRAMES, pc_frame_idx);
+        cv::Mat frame;
+        if (replay_fls_label && replay_fls_label->isVisible() && replay_fls_cap && replay_fls_cap->read(frame)) {
+            show_mat_on_label(frame, replay_fls_label);
+        }
+        if (replay_intensity_cap && replay_3d_intensity_label && replay_3d_intensity_label->isVisible() &&
+            replay_intensity_cap->read(frame)) {
+            show_mat_on_label(frame, replay_3d_intensity_label);
+        }
+        if (replay_range_cap && replay_3d_range_label && replay_3d_range_label->isVisible() &&
+            replay_range_cap->read(frame)) {
+            show_mat_on_label(frame, replay_3d_range_label);
+        }
+        if (replay_pc_viewer && !replay_conversion.esl3d_source_path.isEmpty() &&
+            !replay_conversion.esl3d_frame_offsets.empty()) {
+            standalone_mvp::PointCloudFrame pc_frame;
+            if (replay_mode::readEsl3dPointCloudFrame(
+                    replay_conversion.esl3d_source_path,
+                    replay_conversion.esl3d_frame_offsets,
+                    pc_frame_idx,
+                    pc_frame)) {
+                if (!replay_pc_config_applied) {
+                    replay_pc_viewer->setConfig(pc_frame.config);
+                    replay_pc_config_applied = true;
+                }
+                replay_pc_viewer->setRangeMeters(pc_frame.config.range_m);
+                replay_pc_viewer->updatePointCloudFrame(pc_frame);
+                if (replay_3d_tab_active()) {
+                    replay_pc_viewer->refreshEmbeddedView();
+                }
+            }
+        }
+        if (replay_sss_label && replay_sss_label->isVisible() && !replay_conversion.sss_png_path.isEmpty()) {
+            const QPixmap full(replay_conversion.sss_png_path);
+            if (!full.isNull()) {
+                const int total_rows = std::max(1, replay_conversion.sss_row_count);
+                const int visible_rows =
+                    std::clamp(replay_frame_index + 1, 1, std::min(total_rows, full.height()));
+                const QRect crop(0, 0, full.width(), visible_rows);
+                const QPixmap partial = full.copy(crop);
+                replay_sss_label->setAlignment(Qt::AlignCenter);
+                replay_sss_label->setPixmap(
+                    partial.scaled(replay_sss_label->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            }
+        }
+        replay_slider->blockSignals(true);
+        replay_slider->setValue(replay_frame_index);
+        replay_slider->blockSignals(false);
+        replay_time_label->setText(QStringLiteral("%1 / %2").arg(replay_frame_index).arg(replay_max_frame));
+    };
+    auto shutdown_replay_ui = [&]() {
+        replay_timer.stop();
+        QObject::disconnect(&replay_timer, nullptr, nullptr, nullptr);
+        replay_playing = false;
+        replay_mode_active = false;
+        scene_edit_pauses_sonar.store(false);
+        replay_window.hide();
+        replay_floating_window.hide();
+    };
+    QObject::connect(&replay_timer, &QTimer::timeout, [&]() {
+        if (!replay_playing) return;
+        int next = replay_frame_index + 1;
+        if (next > replay_max_frame) next = 0;
+        replay_seek(next);
+    });
     QObject::connect(path_editor, &standalone_mvp::PathEditorPanel::pathEdited, [&](const standalone_mvp::PathModeConfig& cfg) {
         app_cfg.path_mode = cfg;
     });
@@ -1533,6 +1722,8 @@ int main(int argc, char** argv) {
     scene_editor_button.setDefault(false);
     operation_guide_button.setAutoDefault(false);
     operation_guide_button.setDefault(false);
+    replay_mode_button.setAutoDefault(false);
+    replay_mode_button.setDefault(false);
     path_mode_button.setAutoDefault(false);
     path_mode_button.setDefault(false);
     path_start_button.setAutoDefault(false);
@@ -1556,6 +1747,171 @@ int main(int argc, char** argv) {
             operation_guide_dialog->activateWindow();
         }, Qt::QueuedConnection);
     });
+    QObject::connect(replay_play_pause_btn, &QPushButton::clicked, [&]() {
+        replay_playing = !replay_playing;
+        replay_play_pause_btn->setText(replay_playing ? QStringLiteral("Pause") : QStringLiteral("Play"));
+    });
+    QObject::connect(replay_dock_button, &QPushButton::clicked, [&]() {
+        if (replay_window_mode == ReplayWindowMode::Docked) {
+            move_replay_workspace_to_floating();
+            replay_floating_window.show();
+            replay_floating_window.raise();
+            replay_floating_window.activateWindow();
+        } else {
+            replay_floating_window.hide();
+            move_replay_workspace_to_dock();
+        }
+    });
+    QObject::connect(replay_slider, &QSlider::sliderMoved, [&](int v) { replay_seek(v); });
+    QObject::connect(replay_slider, &QSlider::valueChanged, [&](int v) { replay_seek(v); });
+    replay_floating_window.setContextMenuPolicy(Qt::CustomContextMenu);
+    QObject::connect(&replay_floating_window, &QWidget::customContextMenuRequested, [&](const QPoint& pos) {
+        QMenu menu(&replay_floating_window);
+        QAction* to_docked = menu.addAction(QStringLiteral("Dock Replay In Main Replay Window"));
+        QAction* to_floating = menu.addAction(QStringLiteral("Pop Out Replay Tabs"));
+        to_docked->setEnabled(replay_window_mode == ReplayWindowMode::Floating);
+        to_floating->setEnabled(replay_window_mode == ReplayWindowMode::Docked);
+        QAction* selected = menu.exec(replay_floating_window.mapToGlobal(pos));
+        if (selected == to_docked) {
+            replay_floating_window.hide();
+            move_replay_workspace_to_dock();
+        } else if (selected == to_floating) {
+            move_replay_workspace_to_floating();
+            replay_floating_window.show();
+            replay_floating_window.raise();
+        }
+    });
+    replay_workspace->setExtraContextMenuBuilder([&](QMenu& menu) {
+        QAction* to_docked = menu.addAction(QStringLiteral("Dock Replay In Main Replay Window"));
+        QAction* to_floating = menu.addAction(QStringLiteral("Pop Out Replay Tabs"));
+        to_docked->setEnabled(replay_window_mode == ReplayWindowMode::Floating);
+        to_floating->setEnabled(replay_window_mode == ReplayWindowMode::Docked);
+        QObject::connect(to_docked, &QAction::triggered, [&]() {
+            replay_floating_window.hide();
+            move_replay_workspace_to_dock();
+        });
+        QObject::connect(to_floating, &QAction::triggered, [&]() {
+            move_replay_workspace_to_floating();
+            replay_floating_window.show();
+            replay_floating_window.raise();
+        });
+    });
+    QObject::connect(&replay_mode_button, &QPushButton::clicked, [&]() {
+        replay_timer.stop();
+        replay_playing = false;
+        const QString folder = replay_mode::selectReplaySessionFolder(&dashboard_window, project_dir);
+        if (folder.isEmpty()) {
+            return;
+        }
+        QString err;
+        replay_mode::ReplayConversionResult conv;
+        if (!replay_mode::loadOrConvert(folder, conv, err)) {
+            QMessageBox::warning(&dashboard_window, QStringLiteral("回放模式"), err.isEmpty() ? QStringLiteral("加载失败。") : err);
+            return;
+        }
+        replay_conversion = conv;
+        replay_pc_config_applied = false;
+        replay_fls_label = nullptr;
+        replay_sss_label = nullptr;
+        replay_pc_viewer = nullptr;
+        replay_3d_intensity_label = nullptr;
+        replay_3d_range_label = nullptr;
+        replay_workspace->restoreSingle();
+        if (replay_workspace->primaryTabWidget()) {
+            replay_workspace->primaryTabWidget()->clear();
+        }
+        replay_fls_cap.reset();
+        replay_intensity_cap.reset();
+        replay_range_cap.reset();
+        replay_max_frame = 0;
+        if (conv.has_fls && !conv.fls_mp4_path.isEmpty()) {
+            replay_fls_cap = std::make_unique<cv::VideoCapture>(conv.fls_mp4_path.toStdString());
+            replay_max_frame = std::max(replay_max_frame, static_cast<int>(replay_fls_cap->get(cv::CAP_PROP_FRAME_COUNT)) - 1);
+            auto* page = new QWidget();
+            auto* layout = new QVBoxLayout(page);
+            layout->setContentsMargins(0, 0, 0, 0);
+            replay_fls_label = new QLabel(page);
+            styleReplayImageLabel(replay_fls_label);
+            layout->addWidget(replay_fls_label, 1);
+            replay_workspace->addTab(page, QStringLiteral("FLS"));
+        }
+        if (conv.has_sss) {
+            replay_max_frame = std::max(replay_max_frame, std::max(0, conv.sss_row_count - 1));
+            auto* page = new QWidget();
+            auto* layout = new QVBoxLayout(page);
+            layout->setContentsMargins(0, 0, 0, 0);
+            replay_sss_label = new QLabel(page);
+            styleReplayImageLabel(replay_sss_label);
+            layout->addWidget(replay_sss_label, 1);
+            replay_workspace->addTab(page, QStringLiteral("SSS"));
+        }
+        if (conv.has_3d && !conv.intensity_mp4_path.isEmpty() && !conv.range_mp4_path.isEmpty()) {
+            replay_intensity_cap = std::make_unique<cv::VideoCapture>(conv.intensity_mp4_path.toStdString());
+            replay_range_cap = std::make_unique<cv::VideoCapture>(conv.range_mp4_path.toStdString());
+            const int video_frames = std::max(
+                static_cast<int>(replay_intensity_cap->get(cv::CAP_PROP_FRAME_COUNT)),
+                static_cast<int>(replay_range_cap->get(cv::CAP_PROP_FRAME_COUNT)));
+            replay_max_frame = std::max(replay_max_frame, video_frames - 1);
+            if (conv.esl3d_frame_count > 0) {
+                replay_max_frame = std::max(replay_max_frame, conv.esl3d_frame_count - 1);
+            }
+            auto* page = new QWidget();
+            auto* v = new QVBoxLayout(page);
+            v->setContentsMargins(0, 0, 0, 0);
+            replay_pc_viewer = new standalone_mvp::PointCloudViewerWindow(page);
+            replay_pc_viewer->setMinimumHeight(260);
+            replay_pc_viewer->setEmbeddedReplayMode(true);
+            replay_3d_intensity_label = new QLabel(page);
+            replay_3d_range_label = new QLabel(page);
+            styleReplayImageLabel(replay_3d_intensity_label);
+            styleReplayImageLabel(replay_3d_range_label);
+            v->addWidget(replay_pc_viewer, 2);
+            auto* h = new QHBoxLayout();
+            h->addWidget(replay_3d_intensity_label, 1);
+            h->addWidget(replay_3d_range_label, 1);
+            v->addLayout(h, 1);
+            replay_workspace->addTab(page, QStringLiteral("3D Sonar"));
+        }
+        const int replay_tab_count =
+            (replay_workspace && replay_workspace->primaryTabWidget())
+                ? replay_workspace->primaryTabWidget()->count()
+                : 0;
+        if (replay_tab_count == 0) {
+            QMessageBox::information(&dashboard_window, QStringLiteral("回放模式"), QStringLiteral("目录中没有可回放的数据。"));
+            return;
+        }
+        if (QTabWidget* replay_tabs = replay_workspace->primaryTabWidget()) {
+            replay_tabs->disconnect(replay_tabs, &QTabWidget::currentChanged, nullptr, nullptr);
+            QObject::connect(replay_tabs, &QTabWidget::currentChanged, [&](int) {
+                replay_seek(replay_frame_index);
+            });
+        }
+        replay_mode_active = true;
+        replay_playing = true;
+        replay_play_pause_btn->setText(QStringLiteral("Pause"));
+        scene_edit_pauses_sonar.store(true);
+        replay_slider->setRange(0, std::max(0, replay_max_frame));
+        replay_seek(0);
+        dashboard_window.hide();
+        sonar_floating_window.hide();
+        if (side_scan_window.isVisible()) {
+            side_scan_window.hide();
+        }
+        if (replay_window_mode == ReplayWindowMode::Docked) {
+            replay_floating_window.hide();
+            move_replay_workspace_to_dock();
+        } else {
+            move_replay_workspace_to_floating();
+            replay_floating_window.show();
+            replay_floating_window.raise();
+        }
+        replay_window.show();
+        replay_window.raise();
+        replay_window.activateWindow();
+        replay_timer.start();
+    });
+    // Avoid destroyed() cleanup lambda here: replay_floating_window is declared after replay_window
+    // and may already be destructed when replay_window emits destroyed during app shutdown.
     bool path_mode_enabled_ui = false;
     bool output_session_running = false;
     std::chrono::steady_clock::time_point output_session_start_time{};
@@ -1713,7 +2069,9 @@ int main(int argc, char** argv) {
         }
         if (pc_on) {
             session.esl3d_path = QDir(session.module_dir).filePath(QStringLiteral("3d.esl3d"));
-            session.waveform_dir = standalone_mvp::buildModuleWaveformDir(session.module_dir);
+            if (cfg.point_cloud_config.generate_raw_waveform) {
+                session.waveform_dir = standalone_mvp::buildModuleWaveformDir(session.module_dir);
+            }
         }
         return session;
     };
@@ -1810,6 +2168,12 @@ int main(int argc, char** argv) {
         refresh_path_run_buttons();
         std::cout << "[output] session stopped root=" << session_root.toStdString() << std::endl;
     };
+    auto apply_path_stop_action = [&]() {
+        path_follower.stop();
+        path_mode_running = false;
+        app_cfg.path_mode.enabled = false;
+        stop_all_output_sessions();
+    };
     auto start_path_following = [&]() {
         app_cfg.path_mode = path_editor->pathConfig();
         app_cfg.path_mode.enabled = true;
@@ -1857,12 +2221,7 @@ int main(int argc, char** argv) {
         if (!output_session_running) {
             return;
         }
-        if (path_mode_enabled_ui) {
-            path_follower.stop();
-            path_mode_running = false;
-            app_cfg.path_mode.enabled = false;
-        }
-        stop_all_output_sessions();
+        apply_path_stop_action();
     });
     QObject::connect(path_editor, &standalone_mvp::PathEditorPanel::teleportRequested, [&](double x, double y, double z) {
         if (path_mode_enabled_ui) {
@@ -2456,8 +2815,13 @@ int main(int argc, char** argv) {
                 commanded_pose = active_pose;
             }
             if (!path_follower.running()) {
-                path_mode_running = false;
-                app_cfg.path_mode.enabled = false;
+                if (output_session_running) {
+                    apply_path_stop_action();
+                } else {
+                    path_follower.stop();
+                    path_mode_running = false;
+                    app_cfg.path_mode.enabled = false;
+                }
             }
         } else if (enable_auto_pose) {
             const double t = static_cast<double>(frame_idx) * 0.01;
@@ -2605,9 +2969,15 @@ int main(int argc, char** argv) {
     if (max_frames > 0) {
         int frames = 0;
         while (!viewer.done() && frames < max_frames) {
-            if (!dashboard_window.isVisible()) {
+            if (!dashboard_window.isVisible() && !replay_mode_active) {
                 viewer.setDone(true);
                 break;
+            }
+            if (replay_mode_active && !replay_window.isVisible()) {
+                replay_timer.stop();
+                replay_mode_active = false;
+                scene_edit_pauses_sonar.store(false);
+                dashboard_window.show();
             }
             if (third_viewer && third_viewer->done()) {
                 third_viewer.reset();
@@ -2720,7 +3090,8 @@ int main(int argc, char** argv) {
                         const int overlay_range_m =
                             static_cast<int>(std::lround(static_cast<double>(sonar->getRange())));
                         cv::Mat sonar_vis = standalone_mvp::renderSonarLikeSonarWidget(
-                            sonar_sample, sonar_plot_w, sonar_plot_h, overlay_range_m);
+                            sonar_sample, sonar_plot_w, sonar_plot_h, overlay_range_m,
+                            global_env_cfg.enable_antialiasing);
                         if (!sonar_vis.empty()) {
                             cv::imshow("sonar_image", sonar_vis);
                         }
@@ -2845,15 +3216,22 @@ int main(int argc, char** argv) {
         }
         persist_runtime_to_config();
         restart_if_requested();
+        shutdown_replay_ui();
         std::cout << "[gui] exit(max_frames)" << std::endl;
         return 0;
     }
 
     int frames = 0;
     while (!viewer.done()) {
-        if (!dashboard_window.isVisible()) {
+        if (!dashboard_window.isVisible() && !replay_mode_active) {
             viewer.setDone(true);
             break;
+        }
+        if (replay_mode_active && !replay_window.isVisible()) {
+            replay_timer.stop();
+            replay_mode_active = false;
+            scene_edit_pauses_sonar.store(false);
+            dashboard_window.show();
         }
         if (third_viewer && third_viewer->done()) {
             third_viewer.reset();
@@ -2966,7 +3344,8 @@ int main(int argc, char** argv) {
                     const int overlay_range_m =
                         static_cast<int>(std::lround(static_cast<double>(sonar->getRange())));
                     cv::Mat sonar_vis = standalone_mvp::renderSonarLikeSonarWidget(
-                        sonar_sample, sonar_plot_w, sonar_plot_h, overlay_range_m);
+                        sonar_sample, sonar_plot_w, sonar_plot_h, overlay_range_m,
+                        global_env_cfg.enable_antialiasing);
                     if (!sonar_vis.empty()) {
                         cv::imshow("sonar_image", sonar_vis);
                     }
@@ -3090,6 +3469,7 @@ int main(int argc, char** argv) {
     }
     persist_runtime_to_config();
     restart_if_requested();
+    shutdown_replay_ui();
     std::cout << "[gui] exit(normal)" << std::endl;
     return 0;
 }

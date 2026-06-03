@@ -80,7 +80,7 @@ PointCloudSonarConfig PointCloudSonarSimulation::config() const {
     return config_;
 }
 
-PointCloudSamplingInfo PointCloudSonarSimulation::computeSamplingInfo(PointCloudSonarConfig& cfg) const {
+PointCloudSamplingInfo computePointCloudSampling(PointCloudSonarConfig& cfg) {
     PointCloudSamplingInfo info;
     cfg.range_m = clampRangeMeters(cfg.range_m);
     cfg.horizontal_fov_deg = clampFovDeg(cfg.horizontal_fov_deg);
@@ -125,6 +125,10 @@ PointCloudSamplingInfo PointCloudSonarSimulation::computeSamplingInfo(PointCloud
 
     info.budgeted_point_count = info.horizontal_samples * info.vertical_samples;
     return info;
+}
+
+PointCloudSamplingInfo PointCloudSonarSimulation::computeSamplingInfo(PointCloudSonarConfig& cfg) const {
+    return computePointCloudSampling(cfg);
 }
 
 void PointCloudSonarSimulation::rebuildCaptureToolIfNeeded(const PointCloudSamplingInfo& sampling, const PointCloudSonarConfig& cfg) {

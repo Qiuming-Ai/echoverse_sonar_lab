@@ -24,7 +24,7 @@ inline void validateSonarSample(sonar_types_v2::samples::Sonar& sonar) {
  * overlay_range_m drives SonarPlot distance grid labels (match UI "Range" m).
  */
 cv::Mat renderSonarLikeSonarWidget(const sonar_types_v2::samples::Sonar& sonar, int plot_width, int plot_height,
-                                   int overlay_range_m = 18);
+                                   int overlay_range_m = 18, bool enable_antialiasing = true);
 
 /** Same as imaging_sonar_simulation MultibeamSonarTask: sonar.setRegularBeamBearings after simulate. */
 void finalizeMultibeamSonarSample(sonar_types_v2::samples::Sonar& sonar, sonar_types_v2::Angle beam_width, std::uint32_t beam_count);

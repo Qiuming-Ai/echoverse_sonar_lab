@@ -75,6 +75,8 @@ struct PointCloudFrame {
     std::string coordinate_frame = "world";
 };
 
+PointCloudSamplingInfo computePointCloudSampling(PointCloudSonarConfig& cfg);
+
 class PointCloudSonarSimulation {
 public:
     PointCloudSonarSimulation(const PointCloudSonarConfig& config, osg::ref_ptr<osg::Group> shared_scene_root);

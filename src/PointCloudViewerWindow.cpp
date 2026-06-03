@@ -20,10 +20,11 @@
 #include <osg/StateSet>
 #include <osg/Viewport>
 #include <osgViewer/GraphicsWindow>
-#include <osgViewer/GraphicsWindow>
+#include <osg/GraphicsContext>
 #if defined(_WIN32)
 #include <osgViewer/api/Win32/GraphicsWindowWin32>
 #endif
+#include <osgGA/GUIEventAdapter>
 #include <osgGA/TrackballManipulator>
 
 #include <array>
@@ -211,6 +212,58 @@ void PointCloudViewerWindow::setRenderBlockedByMainViewer(bool blocked) {
     render_blocked_by_main_viewer_ = blocked;
 }
 
+void PointCloudViewerWindow::setEmbeddedReplayMode(bool enabled) {
+    embedded_replay_mode_ = enabled;
+    if (enabled) {
+        settings_drawer_expanded_ = false;
+        info_drawer_expanded_ = false;
+        setInitialViewFromPose(Eigen::Affine3d::Identity());
+    }
+    if (settings_drawer_toggle_button_) {
+        settings_drawer_toggle_button_->setVisible(!enabled);
+    }
+    if (info_drawer_toggle_button_) {
+        info_drawer_toggle_button_->setVisible(!enabled);
+    }
+    if (settings_drawer_) {
+        settings_drawer_->setVisible(!enabled && settings_drawer_expanded_);
+    }
+    if (info_drawer_) {
+        info_drawer_->setVisible(!enabled && info_drawer_expanded_);
+    }
+    if (show_coordinate_overlay_) {
+        show_coordinate_overlay_->setChecked(true);
+    }
+    if (overlay_geode_) {
+        overlay_geode_->setNodeMask(~0u);
+    }
+    if (render_timer_) {
+        render_timer_->setInterval(33);
+        if (isVisible()) {
+            render_timer_->start();
+        }
+    }
+    if (osg_container_) {
+        osg_container_->setFocusPolicy(Qt::StrongFocus);
+        osg_container_->setAttribute(Qt::WA_OpaquePaintEvent, enabled);
+        osg_container_->setAutoFillBackground(enabled);
+        if (enabled) {
+            osg_container_->setStyleSheet(QStringLiteral("background:#02050a;"));
+        }
+    }
+}
+
+void PointCloudViewerWindow::refreshEmbeddedView() {
+    last_viewport_w_ = -1;
+    last_viewport_h_ = -1;
+    syncEmbeddedViewport();
+    viewer_.frame();
+    if (osg_container_) {
+        osg_container_->update();
+    }
+    update();
+}
+
 void PointCloudViewerWindow::buildUi() {
     setWindowTitle("3D Sonar Point Cloud");
     resize(1080, 760);
@@ -319,6 +372,7 @@ void PointCloudViewerWindow::buildUi() {
     if (osg_foreign_window) {
         osg_container_ = QWidget::createWindowContainer(osg_foreign_window, viewer_frame);
         osg_container_->setFocusPolicy(Qt::StrongFocus);
+        osg_container_->installEventFilter(this);
         frame_layout->addWidget(osg_container_, 1);
     } else {
         auto* fallback = new QLabel("OSG viewer unavailable", viewer_frame);
@@ -397,6 +451,12 @@ void PointCloudViewerWindow::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
     updateInfoDrawerGeometry();
     updateSettingsDrawerGeometry();
+    if (embedded_replay_mode_) {
+        last_viewport_w_ = -1;
+        last_viewport_h_ = -1;
+        syncEmbeddedViewport();
+        viewer_.frame();
+    }
 }
 
 void PointCloudViewerWindow::showEvent(QShowEvent* event) {
@@ -413,21 +473,29 @@ void PointCloudViewerWindow::showEvent(QShowEvent* event) {
     }
     updateInfoDrawerGeometry();
     updateSettingsDrawerGeometry();
-    if (settings_drawer_toggle_button_) {
-        settings_drawer_toggle_button_->show();
-        settings_drawer_toggle_button_->raise();
+    if (!embedded_replay_mode_) {
+        if (settings_drawer_toggle_button_) {
+            settings_drawer_toggle_button_->show();
+            settings_drawer_toggle_button_->raise();
+        }
+        if (settings_drawer_) {
+            settings_drawer_->setVisible(settings_drawer_expanded_);
+            settings_drawer_->raise();
+        }
+        if (info_drawer_toggle_button_) {
+            info_drawer_toggle_button_->show();
+            info_drawer_toggle_button_->raise();
+        }
+        if (info_drawer_) {
+            info_drawer_->setVisible(info_drawer_expanded_);
+            info_drawer_->raise();
+        }
     }
-    if (settings_drawer_) {
-        settings_drawer_->setVisible(settings_drawer_expanded_);
-        settings_drawer_->raise();
-    }
-    if (info_drawer_toggle_button_) {
-        info_drawer_toggle_button_->show();
-        info_drawer_toggle_button_->raise();
-    }
-    if (info_drawer_) {
-        info_drawer_->setVisible(info_drawer_expanded_);
-        info_drawer_->raise();
+    if (embedded_replay_mode_) {
+        refreshEmbeddedView();
+        if (osg_container_) {
+            osg_container_->setFocus(Qt::OtherFocusReason);
+        }
     }
 }
 
@@ -448,6 +516,74 @@ void PointCloudViewerWindow::hideEvent(QHideEvent* event) {
 }
 
 bool PointCloudViewerWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == osg_container_ && osg_container_->isVisible()) {
+        osgViewer::GraphicsWindow* gw = nullptr;
+        if (osg::GraphicsContext* gc = viewer_.getCamera() ? viewer_.getCamera()->getGraphicsContext() : nullptr) {
+            gw = dynamic_cast<osgViewer::GraphicsWindow*>(gc);
+        }
+        if (gw && gw->getEventQueue()) {
+            auto mapOsgCoords = [&](const QPoint& global_pos, float& x, float& y) {
+                const QPoint local = osg_container_->mapFromGlobal(global_pos);
+                x = static_cast<float>(local.x());
+                y = static_cast<float>(osg_container_->height() - local.y());
+            };
+            auto osgMouseButton = [](Qt::MouseButton button) {
+                switch (button) {
+                case Qt::LeftButton:
+                    return 1;
+                case Qt::MiddleButton:
+                    return 2;
+                case Qt::RightButton:
+                    return 3;
+                default:
+                    return 1;
+                }
+            };
+            switch (event->type()) {
+            case QEvent::MouseButtonPress: {
+                auto* me = static_cast<QMouseEvent*>(event);
+                float x = 0.0f;
+                float y = 0.0f;
+                mapOsgCoords(me->globalPosition().toPoint(), x, y);
+                gw->getEventQueue()->mouseButtonPress(x, y, osgMouseButton(me->button()));
+                viewer_.frame();
+                break;
+            }
+            case QEvent::MouseButtonRelease: {
+                auto* me = static_cast<QMouseEvent*>(event);
+                float x = 0.0f;
+                float y = 0.0f;
+                mapOsgCoords(me->globalPosition().toPoint(), x, y);
+                gw->getEventQueue()->mouseButtonRelease(x, y, osgMouseButton(me->button()));
+                viewer_.frame();
+                break;
+            }
+            case QEvent::MouseMove: {
+                auto* me = static_cast<QMouseEvent*>(event);
+                float x = 0.0f;
+                float y = 0.0f;
+                mapOsgCoords(me->globalPosition().toPoint(), x, y);
+                gw->getEventQueue()->mouseMotion(x, y);
+                viewer_.frame();
+                break;
+            }
+            case QEvent::Wheel: {
+                auto* we = static_cast<QWheelEvent*>(event);
+                float x = 0.0f;
+                float y = 0.0f;
+                mapOsgCoords(we->globalPosition().toPoint(), x, y);
+                gw->getEventQueue()->mouseMotion(x, y);
+                gw->getEventQueue()->mouseScroll(
+                    we->angleDelta().y() > 0 ? osgGA::GUIEventAdapter::SCROLL_UP
+                                             : osgGA::GUIEventAdapter::SCROLL_DOWN);
+                viewer_.frame();
+                break;
+            }
+            default:
+                break;
+            }
+        }
+    }
     if (watched == tracked_host_window_) {
         switch (event->type()) {
         case QEvent::Move:
@@ -474,6 +610,11 @@ void PointCloudViewerWindow::updateSettingsDrawerGeometry() {
     if (!settings_drawer_ || !settings_drawer_toggle_button_) {
         return;
     }
+    if (embedded_replay_mode_) {
+        settings_drawer_->setVisible(false);
+        settings_drawer_toggle_button_->setVisible(false);
+        return;
+    }
     if (!isVisible() || !window() || !window()->isVisible()) {
         settings_drawer_->setVisible(false);
         settings_drawer_toggle_button_->setVisible(false);
@@ -497,6 +638,11 @@ void PointCloudViewerWindow::updateSettingsDrawerGeometry() {
 
 void PointCloudViewerWindow::updateInfoDrawerGeometry() {
     if (!info_drawer_ || !info_drawer_toggle_button_) {
+        return;
+    }
+    if (embedded_replay_mode_) {
+        info_drawer_->setVisible(false);
+        info_drawer_toggle_button_->setVisible(false);
         return;
     }
     if (!isVisible() || !window() || !window()->isVisible()) {
@@ -732,7 +878,9 @@ void PointCloudViewerWindow::updatePointCloudFrame(const PointCloudFrame& frame)
     point_vertices_->dirty();
     point_colors_->dirty();
     updateCoordinateOverlay(frame);
-    autoFrameCameraToPoints();
+    if (!embedded_replay_mode_) {
+        autoFrameCameraToPoints();
+    }
 
     updateStatusLabel(frame);
     (void)update_counter;
@@ -859,11 +1007,12 @@ void PointCloudViewerWindow::autoFrameCameraToPoints() {
     // Keep auto-framed view consistent with the flipped up-axis baseline.
     const osg::Vec3d up(0.0, 0.0, -1.0);
 
-    tb->setTransformation(eye, center, up);
-    if (!has_auto_framed_) {
-        tb->setHomePosition(eye, center, up);
-        has_auto_framed_ = true;
+    if (has_auto_framed_) {
+        return;
     }
+    tb->setTransformation(eye, center, up);
+    tb->setHomePosition(eye, center, up);
+    has_auto_framed_ = true;
 }
 
 void PointCloudViewerWindow::rebuildPalette(int palette_index) {

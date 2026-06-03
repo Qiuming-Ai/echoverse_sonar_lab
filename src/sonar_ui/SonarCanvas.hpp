@@ -32,6 +32,8 @@ public:
     void setData(const sonar_types_v2::samples::Sonar& sonar);
     void setSectorScan(bool continuous, sonar_types_v2::Angle leftLimit, sonar_types_v2::Angle rightLimit);
     void setMotorStep(const sonar_types_v2::Angle& step);
+    void setAntialiasingEnabled(bool enabled);
+    bool antialiasingEnabled() const;
 
 protected:
     void paintEvent(QPaintEvent *event);
@@ -45,9 +47,15 @@ protected:
     int sonarIndexAtPixel(int x, int y) const;
     bool hasDrawableSonar() const;
     void updateOrigin();
+    QColor colorAtIntensity(float intensity) const;
+    bool multibeamPolarAtPixel(int x, int y, double& beam_f, double& radius_f) const;
     sonar_types_v2::samples::Sonar lastSonar;
     double scaleX;
     double scaleY;
+    double pixelsPerBin;
+    double sectorMin;
+    double sectorMax;
+    double beamInterval;
     int range;
     int numSteps;
     bool changedSize;
@@ -57,6 +65,7 @@ protected:
     bool isMultibeamSonar;
     bool continuous;
     bool enabledGrid;
+    bool enableAntialiasing;
     QPoint origin;
     std::vector<int> transfer;
     std::vector<QColor> colorMap;

@@ -133,6 +133,9 @@ void MbesModule::setModuleConfig(const standalone_mvp::SonarModuleConfig& module
 
 void MbesModule::setEnvironmentConfig(const standalone_mvp::EnvironmentConfig& env_config) {
     env_cfg = env_config;
+    if (rock_sonar_ui) {
+        rock_sonar_ui->setAntialiasingEnabled(env_cfg.enable_antialiasing);
+    }
 }
 
 bool MbesModule::sonarEnabledByBinding() const {
@@ -196,6 +199,7 @@ void MbesModule::setupWidget(DockWorkspace* workspace, const QString& title) {
         module_cfg.mbes_config.tcp_host,
         module_cfg.mbes_config.tcp_port);
     rock_sonar_ui->setSonarPalette(1);
+    rock_sonar_ui->setAntialiasingEnabled(env_cfg.enable_antialiasing);
 }
 
 void MbesModule::connectWidgetSignals() {
@@ -291,7 +295,9 @@ void MbesModule::beginOutputSession(standalone_mvp::SonarTcpHub* hub,
 }
 
 void MbesModule::endOutputSession() {
-    const bool run_post = module_cfg.point_cloud_config.file_output_enabled && !output_session_.esl3d_path.isEmpty();
+    const bool run_post = module_cfg.point_cloud_config.file_output_enabled &&
+                          module_cfg.point_cloud_config.generate_raw_waveform &&
+                          !output_session_.esl3d_path.isEmpty();
     const QString esl3d_path = output_session_.esl3d_path;
     const QString waveform_dir = output_session_.waveform_dir;
 

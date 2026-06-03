@@ -35,7 +35,7 @@ QString quoteCommandPath(const QString& path) {
 }
 
 QString formatQuotedExeCommand(const QString& exe, const QStringList& args) {
-    QString cmd = quoteCommandPath(exe);
+    QString cmd = QDir::toNativeSeparators(exe);
     for (const QString& arg : args) {
         cmd += QLatin1Char(' ');
         cmd += quoteCommandPath(arg);

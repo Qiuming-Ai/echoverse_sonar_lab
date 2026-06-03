@@ -304,6 +304,7 @@ QJsonObject environmentConfigToJson(const EnvironmentConfig& cfg) {
     o["enable_reverb"] = cfg.enable_reverb;
     o["enable_speckle"] = cfg.enable_speckle;
     o["enable_attenuation"] = cfg.enable_attenuation;
+    o["enable_antialiasing"] = cfg.enable_antialiasing;
     o["sound_speed_mps"] = cfg.sound_speed_mps;
     return o;
 }
@@ -317,6 +318,7 @@ EnvironmentConfig environmentConfigFromJson(const QJsonObject& o, EnvironmentCon
     cfg.enable_reverb = readBool(o, "enable_reverb", cfg.enable_reverb);
     cfg.enable_speckle = readBool(o, "enable_speckle", cfg.enable_speckle);
     cfg.enable_attenuation = readBool(o, "enable_attenuation", cfg.enable_attenuation);
+    cfg.enable_antialiasing = readBool(o, "enable_antialiasing", cfg.enable_antialiasing);
     cfg.sound_speed_mps = std::clamp(readDouble(o, "sound_speed_mps", cfg.sound_speed_mps), 1000.0, 1800.0);
     return cfg;
 }
@@ -411,6 +413,7 @@ QJsonObject pointCloudConfigToJson(const PointCloudSonarConfigUi& cfg) {
     o["show_coordinate_overlay"] = cfg.show_coordinate_overlay;
     o["tcp_output_enabled"] = cfg.tcp_output_enabled;
     o["file_output_enabled"] = cfg.file_output_enabled;
+    o["generate_raw_waveform"] = cfg.generate_raw_waveform;
     o["tcp_host"] = cfg.tcp_host;
     o["tcp_port"] = cfg.tcp_port;
     return o;
@@ -430,6 +433,7 @@ PointCloudSonarConfigUi pointCloudConfigFromJson(const QJsonObject& o, PointClou
     cfg.show_coordinate_overlay = readBool(o, "show_coordinate_overlay", cfg.show_coordinate_overlay);
     cfg.tcp_output_enabled = readBool(o, "tcp_output_enabled", cfg.tcp_output_enabled);
     cfg.file_output_enabled = readBool(o, "file_output_enabled", cfg.file_output_enabled);
+    cfg.generate_raw_waveform = readBool(o, "generate_raw_waveform", cfg.generate_raw_waveform);
     cfg.tcp_host = readString(o, "tcp_host", cfg.tcp_host);
     cfg.tcp_port = std::clamp(readInt(o, "tcp_port", cfg.tcp_port), 1, 65535);
     return cfg;
@@ -556,6 +560,9 @@ QJsonObject toJson(const AppConfigData& cfg) {
     root["side_scan_sonar"] = side_scan_sonar;
     root["mbes_camera"] = mbes_camera;
     root["point_cloud_sonar"] = point_cloud_sonar;
+    QJsonObject output_file;
+    output_file["generate_raw_waveform"] = cfg.output_file.generate_raw_waveform;
+    root["output_file"] = output_file;
     root["sonar_modules"] = sonar_modules;
     root["ui_layout"] = ui_layout;
     return root;
@@ -651,6 +658,9 @@ AppConfigData fromJson(const QJsonObject& root) {
     }
 
     cfg.point_cloud_sonar = pointCloudConfigFromJson(point_cloud_sonar, cfg.point_cloud_sonar);
+    const QJsonObject output_file_obj = root.value("output_file").toObject();
+    cfg.output_file.generate_raw_waveform =
+        readBool(output_file_obj, "generate_raw_waveform", cfg.point_cloud_sonar.generate_raw_waveform);
     cfg.sonar_window_docked_in_main =
         readBool(ui_layout, "sonar_window_docked_in_main", cfg.sonar_window_docked_in_main);
     cfg.sonar_workspace_split_layout =
@@ -714,6 +724,19 @@ AppConfigData fromJson(const QJsonObject& root) {
         sss.sss_camera_slot1 = cfg.sonar_camera_binding.sss_camera_slot1;
         sss.sss_camera_slot2 = cfg.sonar_camera_binding.sss_camera_slot2;
         cfg.sonar_modules.push_back(sss);
+    }
+
+    if (!output_file_obj.isEmpty()) {
+        for (auto& sm : cfg.sonar_modules) {
+            sm.point_cloud_config.generate_raw_waveform = cfg.output_file.generate_raw_waveform;
+        }
+    } else {
+        for (const auto& sm : cfg.sonar_modules) {
+            if (sm.type == SonarModuleType::FLS || sm.type == SonarModuleType::MBES) {
+                cfg.output_file.generate_raw_waveform = sm.point_cloud_config.generate_raw_waveform;
+                break;
+            }
+        }
     }
 
     cfg.sonar_camera_binding.fls_camera = readString(
@@ -1058,6 +1081,7 @@ AppConfigData makeWizardProjectConfig(const QString& project_display_name, bool 
     cfg.environment.enable_reverb = true;
     cfg.environment.enable_speckle = true;
     cfg.environment.enable_attenuation = true;
+    cfg.environment.enable_antialiasing = true;
     cfg.environment.sound_speed_mps = 1500.0;
 
     cfg.mbes_sonar.range_m = 88.0;

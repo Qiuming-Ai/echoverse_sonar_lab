@@ -21,12 +21,47 @@ void appendIfInRange(std::vector<double>& angles, double candidate, double min_a
         angles.push_back(candidate);
     }
 }
+
+float sampleSonarBilinear(const std::vector<float>& data, int beam_count, int bin_count, double beam_f,
+                          double radius_f) {
+    if (beam_count <= 0 || bin_count <= 0 || data.empty()) {
+        return 0.0f;
+    }
+
+    beam_f = std::clamp(beam_f, 0.0, static_cast<double>(beam_count - 1));
+    radius_f = std::clamp(radius_f, 0.0, static_cast<double>(bin_count - 1));
+
+    const int beam0 = static_cast<int>(std::floor(beam_f));
+    const int beam1 = std::min(beam0 + 1, beam_count - 1);
+    const int radius0 = static_cast<int>(std::floor(radius_f));
+    const int radius1 = std::min(radius0 + 1, bin_count - 1);
+
+    const double beam_t = beam_f - static_cast<double>(beam0);
+    const double radius_t = radius_f - static_cast<double>(radius0);
+
+    const auto sample = [&](int beam, int radius) -> float {
+        return data[static_cast<size_t>(beam) * static_cast<size_t>(bin_count) + static_cast<size_t>(radius)];
+    };
+
+    const float v00 = sample(beam0, radius0);
+    const float v01 = sample(beam0, radius1);
+    const float v10 = sample(beam1, radius0);
+    const float v11 = sample(beam1, radius1);
+
+    const float v0 = v00 + static_cast<float>(radius_t) * (v01 - v00);
+    const float v1 = v10 + static_cast<float>(radius_t) * (v11 - v10);
+    return v0 + static_cast<float>(beam_t) * (v1 - v0);
+}
 }
 
 SonarCanvas::SonarCanvas(QWidget *parent)
     : QFrame(parent),
       scaleX(1.0),
       scaleY(1.0),
+      pixelsPerBin(1.0),
+      sectorMin(0.0),
+      sectorMax(0.0),
+      beamInterval(1.0),
       range(5),
       numSteps(0),
       changedSize(true),
@@ -35,7 +70,8 @@ SonarCanvas::SonarCanvas(QWidget *parent)
       autoDetectMotorStep(true),
       isMultibeamSonar(true),
       continuous(true),
-      enabledGrid(true) {
+      enabledGrid(true),
+      enableAntialiasing(true) {
     motorStep.rad = 0.0;
     lastDiffStep.rad = 0.0;
     leftLimit.rad = 0.0;
@@ -144,6 +180,18 @@ void SonarCanvas::setMotorStep(const sonar_types_v2::Angle& step) {
     autoDetectMotorStep = false;
 }
 
+void SonarCanvas::setAntialiasingEnabled(bool enabled) {
+    if (enableAntialiasing == enabled) {
+        return;
+    }
+    enableAntialiasing = enabled;
+    update();
+}
+
+bool SonarCanvas::antialiasingEnabled() const {
+    return enableAntialiasing;
+}
+
 void SonarCanvas::addScanningData(const sonar_types_v2::samples::Sonar& sonar) {
     if (numSteps <= 0 || sonar.bearings.empty() || sonarData.empty()) {
         return;
@@ -174,6 +222,48 @@ bool SonarCanvas::hasDrawableSonar() const {
     return !transfer.empty() && !sonarData.empty();
 }
 
+QColor SonarCanvas::colorAtIntensity(float intensity) const {
+    if (colorMap.empty()) {
+        return kSonarBackgroundColor;
+    }
+
+    const float palette_f =
+        std::clamp(intensity, 0.0f, 1.0f) * static_cast<float>(kPaletteSize - 1);
+    const int palette0 = static_cast<int>(std::floor(palette_f));
+    const int palette1 = std::min(palette0 + 1, kPaletteSize - 1);
+    const float palette_t = palette_f - static_cast<float>(palette0);
+
+    const QColor& color0 = colorMap[static_cast<size_t>(palette0)];
+    const QColor& color1 = colorMap[static_cast<size_t>(palette1)];
+    return QColor(
+        static_cast<int>(std::lround(color0.red() + palette_t * (color1.red() - color0.red()))),
+        static_cast<int>(std::lround(color0.green() + palette_t * (color1.green() - color0.green()))),
+        static_cast<int>(std::lround(color0.blue() + palette_t * (color1.blue() - color0.blue()))));
+}
+
+bool SonarCanvas::multibeamPolarAtPixel(int x, int y, double& beam_f, double& radius_f) const {
+    if (lastSonar.beam_count <= 0 || lastSonar.bin_count <= 0 || !(pixelsPerBin > 0.0)) {
+        return false;
+    }
+
+    QPointF point(x + 0.5 - origin.x(), y + 0.5 - origin.y());
+    point.rx() /= pixelsPerBin;
+    point.ry() /= pixelsPerBin;
+
+    const double radius = std::sqrt(point.x() * point.x() + point.y() * point.y());
+    const double angle = std::atan2(point.x(), -point.y());
+    if (!std::isfinite(radius) || !std::isfinite(angle) ||
+        angle < sectorMin || angle > sectorMax ||
+        radius > static_cast<double>(lastSonar.bin_count) ||
+        radius <= 0.0) {
+        return false;
+    }
+
+    beam_f = (angle - sectorMin) / beamInterval;
+    radius_f = radius;
+    return true;
+}
+
 void SonarCanvas::paintEvent(QPaintEvent *) {
     if (isMultibeamSonar) {
         sonarData = lastSonar.bins;
@@ -183,15 +273,42 @@ void SonarCanvas::paintEvent(QPaintEvent *) {
     img.fill(kSonarBackgroundColor);
 
     if (hasDrawableSonar()) {
+        const int beam_count = static_cast<int>(lastSonar.beam_count);
+        const int bin_count = static_cast<int>(lastSonar.bin_count);
         for (int y = 0; y < height(); ++y) {
             for (int x = 0; x < width(); ++x) {
-                const int sonarIdx = sonarIndexAtPixel(x, y);
-                if (sonarIdx < 0 || static_cast<size_t>(sonarIdx) >= sonarData.size()) {
-                    continue;
+                QColor color = kSonarBackgroundColor;
+                if (isMultibeamSonar) {
+                    if (enableAntialiasing) {
+                        double beam_f = 0.0;
+                        double radius_f = 0.0;
+                        if (multibeamPolarAtPixel(x, y, beam_f, radius_f)) {
+                            const float intensity =
+                                sampleSonarBilinear(sonarData, beam_count, bin_count, beam_f, radius_f);
+                            color = colorAtIntensity(intensity);
+                        }
+                    } else {
+                        const int sonarIdx = sonarIndexAtPixel(x, y);
+                        if (sonarIdx >= 0 && static_cast<size_t>(sonarIdx) < sonarData.size()) {
+                            const int paletteIdx = static_cast<int>(
+                                std::round(sonarData[static_cast<size_t>(sonarIdx)] * 255.0f));
+                            const int clampedIdx = std::clamp(paletteIdx, 0, kPaletteSize - 1);
+                            color = colorMap[static_cast<size_t>(clampedIdx)];
+                        }
+                    }
+                } else {
+                    const int sonarIdx = sonarIndexAtPixel(x, y);
+                    if (sonarIdx >= 0 && static_cast<size_t>(sonarIdx) < sonarData.size()) {
+                        if (enableAntialiasing) {
+                            color = colorAtIntensity(sonarData[static_cast<size_t>(sonarIdx)]);
+                        } else {
+                            const int paletteIdx = static_cast<int>(
+                                std::round(sonarData[static_cast<size_t>(sonarIdx)] * 255.0f));
+                            const int clampedIdx = std::clamp(paletteIdx, 0, kPaletteSize - 1);
+                            color = colorMap[static_cast<size_t>(clampedIdx)];
+                        }
+                    }
                 }
-                int paletteIdx = static_cast<int>(std::round(sonarData[static_cast<size_t>(sonarIdx)] * 255.0f));
-                paletteIdx = std::clamp(paletteIdx, 0, kPaletteSize - 1);
-                const QColor color = colorMap[static_cast<size_t>(paletteIdx)];
                 img.setPixel(x, y, qRgb(color.red(), color.green(), color.blue()));
             }
         }
@@ -209,11 +326,20 @@ void SonarCanvas::updateOrigin() {
 }
 
 void SonarCanvas::resizeEvent(QResizeEvent *event) {
-    scaleX = (width() > 40) ? static_cast<double>(width()) / kSonarRenderRefWidth : 0.2;
-    scaleY = (height() > 40) ? static_cast<double>(height()) / kSonarRenderRefHeight : 0.2;
-    updateOrigin();
-    changedSize = true;
     QWidget::resizeEvent(event);
+    changedSize = true;
+    if (lastSonar.beam_count > 0 && lastSonar.bin_count > 0 && !lastSonar.bearings.empty()) {
+        if (isMultibeamSonar) {
+            generateMultibeamTransferTable(lastSonar);
+        } else {
+            generateScanningTransferTable(lastSonar);
+        }
+        changedSize = false;
+    } else {
+        scaleX = (width() > 40) ? static_cast<double>(width()) / kSonarRenderRefWidth : 0.2;
+        scaleY = (height() > 40) ? static_cast<double>(height()) / kSonarRenderRefHeight : 0.2;
+        updateOrigin();
+    }
 }
 
 void SonarCanvas::drawOverlay() {
@@ -381,6 +507,10 @@ void SonarCanvas::generateMultibeamTransferTable(const sonar_types_v2::samples::
     if (!std::isfinite(pixels_per_bin)) {
         return;
     }
+    pixelsPerBin = pixels_per_bin;
+    sectorMin = sector_min;
+    sectorMax = sector_max;
+    beamInterval = interval;
     const double center_x = 0.5 * (min_x + max_x);
     const double center_y = 0.5 * (min_y + max_y);
     origin.setX(static_cast<int>(std::lround(0.5 * static_cast<double>(width()) - center_x * pixels_per_bin)));

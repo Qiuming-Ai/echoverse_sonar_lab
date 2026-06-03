@@ -35,6 +35,8 @@ public:
     PointCloudSonarConfig configFromUi() const;
     bool consumePendingConfig(PointCloudSonarConfig& cfg);
     void setRenderBlockedByMainViewer(bool blocked);
+    void setEmbeddedReplayMode(bool enabled);
+    void refreshEmbeddedView();
 
     void updatePointCloudFrame(const PointCloudFrame& frame);
     void setTcpRuntimeStatus(bool running, bool client_connected, std::uint64_t last_seq, std::size_t last_payload_bytes);
@@ -83,6 +85,7 @@ private:
     QWidget* palette_colorbar_ = nullptr;
     QTimer* render_timer_ = nullptr;
     bool render_blocked_by_main_viewer_ = false;
+    bool embedded_replay_mode_ = false;
     bool config_dirty_ = false;
 
     osgViewer::Viewer viewer_;

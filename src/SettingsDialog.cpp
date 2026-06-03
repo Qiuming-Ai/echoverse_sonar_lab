@@ -382,6 +382,7 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     enable_reverb_ = new QCheckBox("Enable Reverb");
     enable_speckle_ = new QCheckBox("Enable Speckle");
     enable_attenuation_ = new QCheckBox("Enable Attenuation");
+    enable_antialiasing_ = new QCheckBox("Enable Antialiasing");
     max_fps_ = makeDouble(1.0, 240.0, 1.0);
     viewer_max_fps_ = makeDouble(1.0, 240.0, 1.0);
     sound_speed_mps_ = makeDouble(1000.0, 1800.0, 1.0);
@@ -396,6 +397,14 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     environment_form->addRow("", enable_reverb_);
     environment_form->addRow("", enable_speckle_);
     environment_form->addRow("", enable_attenuation_);
+    environment_form->addRow("", enable_antialiasing_);
+
+    generate_raw_waveform_ = new QCheckBox(
+        QStringLiteral("Generate raw waveform (pointcloud2file + file2image)"), output_tab);
+    generate_raw_waveform_->setChecked(false);
+    generate_raw_waveform_->setToolTip(
+        QStringLiteral("When enabled, after 3D ESL3D file recording stops, run MATLAB conversion to produce "
+                       "raw waveform HDF5 and images. Requires 3D point cloud file output enabled per sonar."));
 
     file_output_table_ = new QTableWidget(0, 3, output_tab);
     file_output_table_->setHorizontalHeaderLabels(
@@ -428,6 +437,7 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 
     auto* output_layout = new QVBoxLayout(output_tab);
     output_layout->addWidget(new QLabel(QStringLiteral("File Output (enabled in sonar advanced settings)"), output_tab));
+    output_layout->addWidget(generate_raw_waveform_);
     output_layout->addWidget(file_output_table_, 1);
     output_layout->addWidget(new QLabel(QStringLiteral("TCP Output (port editable)"), output_tab));
     output_layout->addWidget(tcp_output_table_, 1);
@@ -786,11 +796,15 @@ void SettingsDialog::setFromConfig(const AppConfigData& cfg) {
     enable_reverb_->setChecked(cfg.environment.enable_reverb);
     enable_speckle_->setChecked(cfg.environment.enable_speckle);
     enable_attenuation_->setChecked(cfg.environment.enable_attenuation);
+    enable_antialiasing_->setChecked(cfg.environment.enable_antialiasing);
 
     sonar_modules_ = cfg.sonar_modules;
     if (sonar_modules_.empty()) {
         SonarModuleConfig d;
         sonar_modules_.push_back(d);
+    }
+    if (generate_raw_waveform_) {
+        generate_raw_waveform_->setChecked(cfg.output_file.generate_raw_waveform);
     }
     refreshSonarTable();
     refreshOutputTables();
@@ -876,11 +890,19 @@ AppConfigData SettingsDialog::configFromUi() {
     cfg.environment.enable_reverb = enable_reverb_->isChecked();
     cfg.environment.enable_speckle = enable_speckle_->isChecked();
     cfg.environment.enable_attenuation = enable_attenuation_->isChecked();
+    cfg.environment.enable_antialiasing = enable_antialiasing_->isChecked();
 
     for (int row = 0; row < sonar_table_->rowCount(); ++row) {
         refreshSonarTypeRow(row);
     }
     cfg.sonar_modules = sonar_modules_;
+    if (generate_raw_waveform_) {
+        cfg.output_file.generate_raw_waveform = generate_raw_waveform_->isChecked();
+        for (auto& sm : cfg.sonar_modules) {
+            sm.point_cloud_config.generate_raw_waveform = cfg.output_file.generate_raw_waveform;
+        }
+        cfg.point_cloud_sonar.generate_raw_waveform = cfg.output_file.generate_raw_waveform;
+    }
     for (const auto& sm : cfg.sonar_modules) {
         if (sm.type == SonarModuleType::FLS) {
             cfg.sonar = sm.fls_config;

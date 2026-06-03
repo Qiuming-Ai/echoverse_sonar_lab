@@ -133,6 +133,9 @@ void FlsModule::setModuleConfig(const standalone_mvp::SonarModuleConfig& module_
 
 void FlsModule::setEnvironmentConfig(const standalone_mvp::EnvironmentConfig& env_config) {
     env_cfg = env_config;
+    if (rock_sonar_ui) {
+        rock_sonar_ui->setAntialiasingEnabled(env_cfg.enable_antialiasing);
+    }
 }
 
 bool FlsModule::sonarEnabledByBinding() const {
@@ -202,6 +205,7 @@ void FlsModule::setupWidget(DockWorkspace* workspace, const QString& title) {
         module_cfg.fls_config.tcp_host,
         module_cfg.fls_config.tcp_port);
     rock_sonar_ui->setSonarPalette(1);
+    rock_sonar_ui->setAntialiasingEnabled(env_cfg.enable_antialiasing);
 }
 
 void FlsModule::connectWidgetSignals() {
@@ -307,7 +311,9 @@ void FlsModule::beginOutputSession(standalone_mvp::SonarTcpHub* hub,
 }
 
 void FlsModule::endOutputSession() {
-    const bool run_post = module_cfg.point_cloud_config.file_output_enabled && !output_session_.esl3d_path.isEmpty();
+    const bool run_post = module_cfg.point_cloud_config.file_output_enabled &&
+                          module_cfg.point_cloud_config.generate_raw_waveform &&
+                          !output_session_.esl3d_path.isEmpty();
     const QString esl3d_path = output_session_.esl3d_path;
     const QString waveform_dir = output_session_.waveform_dir;
 

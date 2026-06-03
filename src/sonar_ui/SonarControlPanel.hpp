@@ -88,6 +88,7 @@ public slots:
     void enableAutoRanging(bool);
     int getRange() const;
     int getGain() const;
+    void setAntialiasingEnabled(bool enabled);
 
     // only for scanning sonars
     void setSectorScan(bool continuous, sonar_types_v2::Angle left, sonar_types_v2::Angle right);

@@ -313,6 +313,12 @@ void SonarControlPanel::setSectorScan(bool continuous, sonar_types_v2::Angle lef
     }
 }
 
+void SonarControlPanel::setAntialiasingEnabled(bool enabled) {
+    if (plot) {
+        plot->setAntialiasingEnabled(enabled);
+    }
+}
+
 void SonarControlPanel::setMinRange(int value) {
     if (slRange) {
         slRange->setMinimum(value);

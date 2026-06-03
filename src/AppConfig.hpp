@@ -84,6 +84,7 @@ struct EnvironmentConfig {
     bool enable_reverb = true;
     bool enable_speckle = true;
     bool enable_attenuation = true;
+    bool enable_antialiasing = true;
     double sound_speed_mps = 1500.0;
 };
 
@@ -148,6 +149,11 @@ struct SideScanSonarConfigUi {
     int tcp_port = 30002;
 };
 
+struct OutputFileConfig {
+    /// When true, run pointcloud2file + file2image after ESL3D recording (MATLAB pipeline).
+    bool generate_raw_waveform = false;
+};
+
 struct PointCloudSonarConfigUi {
     bool enabled = true;
     double range_m = 30.0;
@@ -162,6 +168,7 @@ struct PointCloudSonarConfigUi {
     bool show_coordinate_overlay = true;
     bool tcp_output_enabled = false;
     bool file_output_enabled = false;
+    bool generate_raw_waveform = false;
     QString tcp_host = "0.0.0.0";
     int tcp_port = 30001;
 };
@@ -197,6 +204,7 @@ struct AppConfigData {
     SideScanSonarConfigUi side_scan_sonar;
     SubCameraConfig mbes_camera;
     PointCloudSonarConfigUi point_cloud_sonar;
+    OutputFileConfig output_file;
 
     // UI layout persistence.
     bool sonar_window_docked_in_main = true;

@@ -55,7 +55,7 @@ public:
 } // namespace
 
 cv::Mat renderSonarLikeSonarWidget(const sonar_types_v2::samples::Sonar& sonar, int plot_width, int plot_height,
-                                     int overlay_range_m) {
+                                     int overlay_range_m, bool enable_antialiasing) {
     if (!sonar.beam_count || !sonar.bin_count ||
         sonar.bins.size() < static_cast<std::size_t>(sonar.beam_count) * sonar.bin_count) {
         return {};
@@ -65,10 +65,13 @@ cv::Mat renderSonarLikeSonarWidget(const sonar_types_v2::samples::Sonar& sonar, 
 
     SonarCanvasHot plot(nullptr);
     plot.setOverlayRangeMeters(std::max(1, overlay_range_m));
+    plot.setAntialiasingEnabled(enable_antialiasing);
     plot.resize(plot_width, plot_height);
     plot.setData(sonar);
-    plot.update();
     QApplication::processEvents(QEventLoop::AllEvents, 100);
+    plot.setData(sonar);
+    plot.update();
+    QApplication::processEvents(QEventLoop::AllEvents, 50);
 
     const QPixmap pm = plot.grab();
     if (pm.isNull()) {
