@@ -315,11 +315,13 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     camera_pitch_deg_ = makeDouble(-89.0, 89.0, 0.5);
     camera_horizontal_fov_deg_ = makeDouble(5.0, 179.0, 0.5);
     camera_vertical_fov_deg_ = makeDouble(5.0, 179.0, 0.5);
+    camera_file_output_enabled_ = new QCheckBox("Enable File Output");
     auto* main_camera_form = new QFormLayout();
     main_camera_form->addRow("Yaw (deg)", camera_yaw_deg_);
     main_camera_form->addRow("Pitch (deg)", camera_pitch_deg_);
     main_camera_form->addRow("Horizontal FOV (deg)", camera_horizontal_fov_deg_);
     main_camera_form->addRow("Vertical FOV (deg)", camera_vertical_fov_deg_);
+    main_camera_form->addRow("", camera_file_output_enabled_);
     auto* main_camera_box = new QGroupBox("Main Camera");
     main_camera_box->setLayout(main_camera_form);
 
@@ -382,7 +384,15 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     enable_reverb_ = new QCheckBox("Enable Reverb");
     enable_speckle_ = new QCheckBox("Enable Speckle");
     enable_attenuation_ = new QCheckBox("Enable Attenuation");
+    enable_logistic_response_ = new QCheckBox("Enable Logistic Response");
+    enable_logistic_response_->setToolTip(
+        QStringLiteral("Apply S-curve contrast to shader echo values before beam binning. "
+                       "Disable for linear mapping (often brighter weak seabed returns)."));
     enable_antialiasing_ = new QCheckBox("Enable Antialiasing");
+    enable_beam_axis_smoothing_ = new QCheckBox("Enable Beam Axis Smoothing");
+    enable_beam_axis_smoothing_->setToolTip(
+        QStringLiteral("Apply 1D Gaussian smoothing along the beam axis after FLS/MBES bin synthesis. "
+                       "Reduces angular stair-step artifacts on fan sonar displays."));
     max_fps_ = makeDouble(1.0, 240.0, 1.0);
     viewer_max_fps_ = makeDouble(1.0, 240.0, 1.0);
     sound_speed_mps_ = makeDouble(1000.0, 1800.0, 1.0);
@@ -397,7 +407,9 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     environment_form->addRow("", enable_reverb_);
     environment_form->addRow("", enable_speckle_);
     environment_form->addRow("", enable_attenuation_);
+    environment_form->addRow("", enable_logistic_response_);
     environment_form->addRow("", enable_antialiasing_);
+    environment_form->addRow("", enable_beam_axis_smoothing_);
 
     generate_raw_waveform_ = new QCheckBox(
         QStringLiteral("Generate raw waveform (pointcloud2file + file2image)"), output_tab);
@@ -765,6 +777,7 @@ void SettingsDialog::setFromConfig(const AppConfigData& cfg) {
     camera_pitch_deg_->setValue(cfg.camera_system.main_camera.pitch_deg);
     camera_horizontal_fov_deg_->setValue(cfg.camera_system.main_camera.horizontal_fov_deg);
     camera_vertical_fov_deg_->setValue(cfg.camera_system.main_camera.vertical_fov_deg);
+    camera_file_output_enabled_->setChecked(cfg.camera_system.main_camera.file_output_enabled);
 
     aux_camera_table_->setRowCount(0);
     for (std::size_t i = 0; i < cfg.camera_system.sub_cameras.size(); ++i) {
@@ -796,7 +809,9 @@ void SettingsDialog::setFromConfig(const AppConfigData& cfg) {
     enable_reverb_->setChecked(cfg.environment.enable_reverb);
     enable_speckle_->setChecked(cfg.environment.enable_speckle);
     enable_attenuation_->setChecked(cfg.environment.enable_attenuation);
+    enable_logistic_response_->setChecked(cfg.environment.enable_logistic_response);
     enable_antialiasing_->setChecked(cfg.environment.enable_antialiasing);
+    enable_beam_axis_smoothing_->setChecked(cfg.environment.enable_beam_axis_smoothing);
 
     sonar_modules_ = cfg.sonar_modules;
     if (sonar_modules_.empty()) {
@@ -817,7 +832,7 @@ void SettingsDialog::refreshOutputTables() {
     QSignalBlocker file_blocker(file_output_table_);
     QSignalBlocker tcp_blocker(tcp_output_table_);
 
-    const auto file_rows = collectFileOutputRows(sonar_modules_);
+    const auto file_rows = collectFileOutputRows(sonar_modules_, camera_file_output_enabled_->isChecked());
     file_output_table_->setRowCount(static_cast<int>(file_rows.size()));
     for (int i = 0; i < static_cast<int>(file_rows.size()); ++i) {
         const auto& row = file_rows[static_cast<std::size_t>(i)];
@@ -858,6 +873,7 @@ AppConfigData SettingsDialog::configFromUi() {
     cfg.camera_system.main_camera.pitch_deg = camera_pitch_deg_->value();
     cfg.camera_system.main_camera.horizontal_fov_deg = camera_horizontal_fov_deg_->value();
     cfg.camera_system.main_camera.vertical_fov_deg = camera_vertical_fov_deg_->value();
+    cfg.camera_system.main_camera.file_output_enabled = camera_file_output_enabled_->isChecked();
     cfg.camera = cfg.camera_system.main_camera;
 
     cfg.camera_system.sub_cameras.clear();
@@ -890,7 +906,9 @@ AppConfigData SettingsDialog::configFromUi() {
     cfg.environment.enable_reverb = enable_reverb_->isChecked();
     cfg.environment.enable_speckle = enable_speckle_->isChecked();
     cfg.environment.enable_attenuation = enable_attenuation_->isChecked();
+    cfg.environment.enable_logistic_response = enable_logistic_response_->isChecked();
     cfg.environment.enable_antialiasing = enable_antialiasing_->isChecked();
+    cfg.environment.enable_beam_axis_smoothing = enable_beam_axis_smoothing_->isChecked();
 
     for (int row = 0; row < sonar_table_->rowCount(); ++row) {
         refreshSonarTypeRow(row);

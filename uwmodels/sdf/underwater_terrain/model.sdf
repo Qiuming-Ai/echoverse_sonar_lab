@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<sdf version="1.5">
+  <model name="underwater_terrain">
+    <static>true</static>
+    <link name="link">
+      <visual name="visual">
+        <geometry>
+          <mesh>
+            <uri>model://underwater_terrain/meshes/terrain.obj</uri>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name="collision">
+        <geometry>
+          <mesh>
+            <uri>model://underwater_terrain/meshes/terrain.obj</uri>
+          </mesh>
+        </geometry>
+      </collision>
+    </link>
+  </model>
+</sdf>

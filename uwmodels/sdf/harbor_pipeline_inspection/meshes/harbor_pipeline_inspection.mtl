@@ -1,0 +1,73 @@
+# Materials for harbor_pipeline_inspection.
+
+newmtl seabed
+Ka 0.32 0.38 0.35
+Kd 0.32 0.38 0.35
+Ks 0.05 0.06 0.05
+Ns 8
+d 1
+illum 2
+
+newmtl pipe
+Ka 0.72 0.41 0.25
+Kd 0.72 0.41 0.25
+Ks 0.18 0.15 0.12
+Ns 18
+d 1
+illum 2
+
+newmtl diagonal_pipe
+Ka 0.79 0.51 0.26
+Kd 0.79 0.51 0.26
+Ks 0.2 0.16 0.1
+Ns 18
+d 1
+illum 2
+
+newmtl pipe_band
+Ka 0.17 0.21 0.2
+Kd 0.17 0.21 0.2
+Ks 0.34 0.34 0.32
+Ns 28
+d 1
+illum 2
+
+newmtl cable
+Ka 0.15 0.17 0.18
+Kd 0.15 0.17 0.18
+Ks 0.05 0.05 0.05
+Ns 10
+d 1
+illum 2
+
+newmtl concrete
+Ka 0.56 0.6 0.56
+Kd 0.56 0.6 0.56
+Ks 0.06 0.06 0.06
+Ns 9
+d 1
+illum 2
+
+newmtl concrete_dark
+Ka 0.27 0.32 0.3
+Kd 0.27 0.32 0.3
+Ks 0.08 0.08 0.08
+Ns 10
+d 1
+illum 2
+
+newmtl rubber
+Ka 0.06 0.09 0.08
+Kd 0.06 0.09 0.08
+Ks 0.02 0.02 0.02
+Ns 6
+d 1
+illum 2
+
+newmtl steel
+Ka 0.44 0.5 0.48
+Kd 0.44 0.5 0.48
+Ks 0.45 0.45 0.42
+Ns 45
+d 1
+illum 2

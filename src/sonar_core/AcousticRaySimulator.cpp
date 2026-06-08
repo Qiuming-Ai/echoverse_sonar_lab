@@ -175,3 +175,11 @@ void AcousticRaySimulator::enableSpeckleNoise(bool enable) {
 void AcousticRaySimulator::enableReverb(bool enable) {
     depth_composer.setDrawReverb(enable);
 }
+
+void AcousticRaySimulator::enableLogisticResponse(bool enable) {
+    synthesizer.enableLogisticResponse(enable);
+}
+
+void AcousticRaySimulator::enableBeamAxisSmoothing(bool enable) {
+    synthesizer.enableBeamAxisSmoothing(enable);
+}

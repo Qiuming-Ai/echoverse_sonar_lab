@@ -87,6 +87,7 @@ QJsonObject environmentConfigJson(const standalone_mvp::EnvironmentConfig& cfg) 
     o["enable_reverb"] = cfg.enable_reverb;
     o["enable_speckle"] = cfg.enable_speckle;
     o["enable_attenuation"] = cfg.enable_attenuation;
+    o["enable_logistic_response"] = cfg.enable_logistic_response;
     o["sound_speed_mps"] = cfg.sound_speed_mps;
     return o;
 }
@@ -136,6 +137,10 @@ void FlsModule::setEnvironmentConfig(const standalone_mvp::EnvironmentConfig& en
     if (rock_sonar_ui) {
         rock_sonar_ui->setAntialiasingEnabled(env_cfg.enable_antialiasing);
     }
+    if (sonar) {
+        sonar->enableLogisticResponse(env_cfg.enable_logistic_response);
+        sonar->enableBeamAxisSmoothing(env_cfg.enable_beam_axis_smoothing);
+    }
 }
 
 bool FlsModule::sonarEnabledByBinding() const {
@@ -170,6 +175,8 @@ bool FlsModule::initSimulation(osg::ref_ptr<osg::Group> root, float resolution_c
     sonar->setSonarBeamCount(beam_count);
     sonar->enableReverb(env_cfg.enable_reverb);
     sonar->enableSpeckleNoise(env_cfg.enable_speckle);
+    sonar->enableLogisticResponse(env_cfg.enable_logistic_response);
+    sonar->enableBeamAxisSmoothing(env_cfg.enable_beam_axis_smoothing);
     runtime_range_m = static_cast<float>(module_cfg.fls_config.range_m);
     runtime_gain = static_cast<float>(module_cfg.fls_config.gain);
     return true;
@@ -408,6 +415,7 @@ bool FlsModule::initPointCloudRuntime(
     point_cloud_cfg_runtime.enable_reverb = env_cfg.enable_reverb;
     point_cloud_cfg_runtime.enable_speckle = env_cfg.enable_speckle;
     point_cloud_cfg_runtime.enable_attenuation = env_cfg.enable_attenuation;
+    point_cloud_cfg_runtime.enable_logistic_response = env_cfg.enable_logistic_response;
     point_cloud_cfg_runtime.temperature_c = env_cfg.temperature_c;
     point_cloud_cfg_runtime.salinity_ppt = env_cfg.salinity_ppt;
     point_cloud_cfg_runtime.acidity_ph = env_cfg.acidity_ph;
@@ -515,6 +523,7 @@ void FlsModule::tickPointCloud(const Eigen::Affine3d& pose) {
     point_cloud_cfg_runtime.enable_attenuation = env_cfg.enable_attenuation;
     point_cloud_cfg_runtime.enable_reverb = env_cfg.enable_reverb;
     point_cloud_cfg_runtime.enable_speckle = env_cfg.enable_speckle;
+    point_cloud_cfg_runtime.enable_logistic_response = env_cfg.enable_logistic_response;
     point_cloud_cfg_runtime.attenuation_frequency_khz = env_cfg.attenuation_frequency_khz;
     point_cloud_cfg_runtime.sound_speed_mps = env_cfg.sound_speed_mps;
     point_cloud_sim->setConfig(point_cloud_cfg_runtime);

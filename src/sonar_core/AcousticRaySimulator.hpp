@@ -64,6 +64,8 @@ public:
 
     void enableSpeckleNoise(bool enable);
     void enableReverb(bool enable);
+    void enableLogisticResponse(bool enable);
+    void enableBeamAxisSmoothing(bool enable);
 
     void setRange(float range);
     float getRange();

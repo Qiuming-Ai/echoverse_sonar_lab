@@ -87,6 +87,7 @@ QJsonObject environmentConfigJson(const standalone_mvp::EnvironmentConfig& cfg) 
     o["enable_reverb"] = cfg.enable_reverb;
     o["enable_speckle"] = cfg.enable_speckle;
     o["enable_attenuation"] = cfg.enable_attenuation;
+    o["enable_logistic_response"] = cfg.enable_logistic_response;
     o["sound_speed_mps"] = cfg.sound_speed_mps;
     return o;
 }
@@ -133,6 +134,10 @@ void MbesModule::setModuleConfig(const standalone_mvp::SonarModuleConfig& module
 
 void MbesModule::setEnvironmentConfig(const standalone_mvp::EnvironmentConfig& env_config) {
     env_cfg = env_config;
+    if (sonar) {
+        sonar->enableLogisticResponse(env_cfg.enable_logistic_response);
+        sonar->enableBeamAxisSmoothing(env_cfg.enable_beam_axis_smoothing);
+    }
     if (rock_sonar_ui) {
         rock_sonar_ui->setAntialiasingEnabled(env_cfg.enable_antialiasing);
     }
@@ -159,11 +164,13 @@ bool MbesModule::initSimulation(osg::ref_ptr<osg::Group> root, float resolution_
         sonar_types_v2::Angle::fromDeg(static_cast<float>(module_cfg.mbes_config.beam_width_deg)),
         sonar_types_v2::Angle::fromDeg(static_cast<float>(module_cfg.mbes_config.beam_height_deg)),
         resolution,
-        false,
+        true,
         root);
     sonar->setSonarBeamCount(beam_count);
     sonar->enableReverb(env_cfg.enable_reverb);
     sonar->enableSpeckleNoise(env_cfg.enable_speckle);
+    sonar->enableLogisticResponse(env_cfg.enable_logistic_response);
+    sonar->enableBeamAxisSmoothing(env_cfg.enable_beam_axis_smoothing);
     runtime_range_m = static_cast<float>(module_cfg.mbes_config.range_m);
     runtime_gain = static_cast<float>(module_cfg.mbes_config.gain);
     return true;
@@ -391,6 +398,7 @@ bool MbesModule::initPointCloudRuntime(
     bottom_cfg_runtime.enable_reverb = env_cfg.enable_reverb;
     bottom_cfg_runtime.enable_speckle = env_cfg.enable_speckle;
     bottom_cfg_runtime.enable_attenuation = env_cfg.enable_attenuation;
+    bottom_cfg_runtime.enable_logistic_response = env_cfg.enable_logistic_response;
     bottom_cfg_runtime.temperature_c = env_cfg.temperature_c;
     bottom_cfg_runtime.salinity_ppt = env_cfg.salinity_ppt;
     bottom_cfg_runtime.acidity_ph = env_cfg.acidity_ph;
@@ -481,6 +489,7 @@ void MbesModule::tickPointCloud(const Eigen::Affine3d& pose, bool emit_single_fr
     bottom_cfg_runtime.enable_reverb = env_cfg.enable_reverb;
     bottom_cfg_runtime.enable_speckle = env_cfg.enable_speckle;
     bottom_cfg_runtime.enable_attenuation = env_cfg.enable_attenuation;
+    bottom_cfg_runtime.enable_logistic_response = env_cfg.enable_logistic_response;
     bottom_cfg_runtime.temperature_c = env_cfg.temperature_c;
     bottom_cfg_runtime.salinity_ppt = env_cfg.salinity_ppt;
     bottom_cfg_runtime.acidity_ph = env_cfg.acidity_ph;

@@ -1,0 +1,7 @@
+newmtl sand
+Kd 0.89 0.83 0.71
+Ka 0.05 0.05 0.05
+Ks 0 0 0
+Ns 10
+map_Kd ../materials/textures/sand_albedo.png
+map_Bump ../materials/textures/sand_bump.png

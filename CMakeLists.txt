@@ -194,6 +194,7 @@ if(USE_REAL_SONAR_CORE)
         src/SettingsDialog.cpp
         src/PointCloudSonarSimulation.cpp
         src/PointCloudTcpStreamer.cpp
+        src/MainCameraFileWriter.cpp
         src/Esl2dFileWriter.cpp
         src/SonarTcpHub.cpp
         src/SonarOutputUtil.cpp
@@ -202,6 +203,7 @@ if(USE_REAL_SONAR_CORE)
         src/StartupProgressDialog.cpp
         src/PointCloudViewerWindow.cpp
         src/CameraModule.cpp
+        src/CameraVisualEffects.cpp
         src/FlsModule.cpp
         src/MbesModule.cpp
         src/SssModule.cpp

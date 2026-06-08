@@ -39,6 +39,12 @@ public:
     /** Cache of the last synthesized message (used for LUT invalidation) */
     sonar_types_v2::samples::Sonar cached_last_sonar;
 
+    /** When false, echo samples use linear clamp instead of logistic S-curve. */
+    bool logistic_response_enabled_ = true;
+
+    /** When true, apply 1D Gaussian smoothing along the beam axis after bin synthesis. */
+    bool beam_axis_smoothing_enabled_ = true;
+
     BeamImageSynthesizer()
 	    : sonar_bin_count(500)
 	    , sonar_beam_count(0)
@@ -84,6 +90,9 @@ public:
     */
     void applyOutputGainClamp(std::vector<float>& bins, float gain);
 
+    void enableLogisticResponse(bool enable);
+    void enableBeamAxisSmoothing(bool enable);
+
 private:
     void refreshBeamColumnLut(const cv::Mat& cv_image);
 
@@ -117,6 +126,9 @@ private:
     *  @return the sampling interval
     */
     float computeBinSamplingInterval(float range);
+
+    /** Separable 1D Gaussian along the beam axis (each range bin smoothed independently). */
+    void applyBeamAxisGaussianSmooth(std::vector<float>& bins);
 };
 } // end namespace sonar_core
 

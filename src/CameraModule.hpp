@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AppConfig.hpp"
+#include "CameraVisualEffects.hpp"
 
 #include <QLabel>
 
@@ -42,6 +43,8 @@ public:
     void updateViews(const Eigen::Vector3d& position, double yaw, double pitch);
     void updateWidgets();
     void updateViewports();
+    void setVisualEffects(CameraVisualEffects* effects);
+    void updateVisualEffects(const Eigen::Vector3d& position, double delta_s);
     const SubCameraRuntime* findRuntimeByName(const std::string& name) const;
 
     std::vector<std::string> sub_names;
@@ -49,4 +52,5 @@ public:
     std::vector<QLabel*> labels;
     std::vector<SubCameraRuntime> sub_cameras;
     osg::ref_ptr<osg::MatrixTransform> main_camera_marker;
+    CameraVisualEffects* visual_effects = nullptr;
 };

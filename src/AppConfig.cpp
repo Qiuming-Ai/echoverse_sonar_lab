@@ -304,7 +304,9 @@ QJsonObject environmentConfigToJson(const EnvironmentConfig& cfg) {
     o["enable_reverb"] = cfg.enable_reverb;
     o["enable_speckle"] = cfg.enable_speckle;
     o["enable_attenuation"] = cfg.enable_attenuation;
+    o["enable_logistic_response"] = cfg.enable_logistic_response;
     o["enable_antialiasing"] = cfg.enable_antialiasing;
+    o["enable_beam_axis_smoothing"] = cfg.enable_beam_axis_smoothing;
     o["sound_speed_mps"] = cfg.sound_speed_mps;
     return o;
 }
@@ -318,7 +320,9 @@ EnvironmentConfig environmentConfigFromJson(const QJsonObject& o, EnvironmentCon
     cfg.enable_reverb = readBool(o, "enable_reverb", cfg.enable_reverb);
     cfg.enable_speckle = readBool(o, "enable_speckle", cfg.enable_speckle);
     cfg.enable_attenuation = readBool(o, "enable_attenuation", cfg.enable_attenuation);
+    cfg.enable_logistic_response = readBool(o, "enable_logistic_response", cfg.enable_logistic_response);
     cfg.enable_antialiasing = readBool(o, "enable_antialiasing", cfg.enable_antialiasing);
+    cfg.enable_beam_axis_smoothing = readBool(o, "enable_beam_axis_smoothing", cfg.enable_beam_axis_smoothing);
     cfg.sound_speed_mps = std::clamp(readDouble(o, "sound_speed_mps", cfg.sound_speed_mps), 1000.0, 1800.0);
     return cfg;
 }
@@ -479,6 +483,7 @@ QJsonObject toJson(const AppConfigData& cfg) {
     camera["pitch_deg"] = cfg.camera_system.main_camera.pitch_deg;
     camera["horizontal_fov_deg"] = cfg.camera_system.main_camera.horizontal_fov_deg;
     camera["vertical_fov_deg"] = cfg.camera_system.main_camera.vertical_fov_deg;
+    camera["file_output_enabled"] = cfg.camera_system.main_camera.file_output_enabled;
 
     // Legacy compatibility mirror.
     QJsonObject legacy_camera;
@@ -628,6 +633,8 @@ AppConfigData fromJson(const QJsonObject& root) {
     cfg.camera_system.main_camera.vertical_fov_deg = std::clamp(
         readDouble(main_camera, "vertical_fov_deg", readDouble(camera, "vertical_fov_deg", cfg.camera_system.main_camera.vertical_fov_deg)),
         5.0, 179.0);
+    cfg.camera_system.main_camera.file_output_enabled =
+        readBool(main_camera, "file_output_enabled", cfg.camera_system.main_camera.file_output_enabled);
 
     cfg.camera.horizontal_fov_deg = cfg.camera_system.main_camera.horizontal_fov_deg;
     cfg.camera.vertical_fov_deg = cfg.camera_system.main_camera.vertical_fov_deg;
@@ -1081,7 +1088,9 @@ AppConfigData makeWizardProjectConfig(const QString& project_display_name, bool 
     cfg.environment.enable_reverb = true;
     cfg.environment.enable_speckle = true;
     cfg.environment.enable_attenuation = true;
+    cfg.environment.enable_logistic_response = true;
     cfg.environment.enable_antialiasing = true;
+    cfg.environment.enable_beam_axis_smoothing = true;
     cfg.environment.sound_speed_mps = 1500.0;
 
     cfg.mbes_sonar.range_m = 88.0;

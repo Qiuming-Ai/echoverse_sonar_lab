@@ -151,14 +151,28 @@ QString buildModuleOutputDir(const QString& session_root, const QString& module_
     return dir;
 }
 
+QString buildMainCameraOutputDir(const QString& session_root) {
+    const QString dir = QDir(session_root).filePath(QStringLiteral("Main Camera"));
+    QDir().mkpath(dir);
+    return dir;
+}
+
 QString buildModuleWaveformDir(const QString& module_dir) {
     const QString dir = QDir(module_dir).filePath(QStringLiteral("Waveform Data"));
     QDir().mkpath(dir);
     return dir;
 }
 
-std::vector<OutputFileRow> collectFileOutputRows(const std::vector<SonarModuleConfig>& modules) {
+std::vector<OutputFileRow> collectFileOutputRows(const std::vector<SonarModuleConfig>& modules,
+                                                 const bool main_camera_file_output_enabled) {
     std::vector<OutputFileRow> rows;
+    if (main_camera_file_output_enabled) {
+        OutputFileRow row;
+        row.module_name = QStringLiteral("Main Camera");
+        row.file_format = QStringLiteral("MP4");
+        row.sonar_type = QStringLiteral("Main Camera");
+        rows.push_back(row);
+    }
     for (const auto& mod : modules) {
         if (!mod.enabled) {
             continue;
@@ -331,7 +345,11 @@ bool moduleWantsOutput(const SonarModuleConfig& mod) {
     return false;
 }
 
-bool anyModuleOutputEnabled(const std::vector<SonarModuleConfig>& modules) {
+bool anyModuleOutputEnabled(const std::vector<SonarModuleConfig>& modules,
+                            const bool main_camera_file_output_enabled) {
+    if (main_camera_file_output_enabled) {
+        return true;
+    }
     for (const auto& mod : modules) {
         if (moduleWantsOutput(mod)) {
             return true;
@@ -424,6 +442,13 @@ bool writeSessionRecordingSummary(const SessionRecordingSummaryInput& input) {
     root["duration_seconds"] = input.duration_seconds;
     root["file_output_active"] = input.file_output_active;
     root["tcp_output_active"] = input.tcp_output_active;
+    if (input.main_camera_file_output) {
+        QJsonObject main_camera;
+        main_camera["module_name"] = QStringLiteral("Main Camera");
+        main_camera["file_format"] = QStringLiteral("MP4");
+        main_camera["video_frames"] = static_cast<qint64>(input.main_camera_frames);
+        root["main_camera"] = main_camera;
+    }
     root["recorded_at"] = QDateTime::currentDateTime().toString(Qt::ISODate);
 
     QJsonArray modules;

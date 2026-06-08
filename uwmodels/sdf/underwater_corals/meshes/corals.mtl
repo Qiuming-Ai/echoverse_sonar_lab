@@ -1,0 +1,27 @@
+newmtl coral_0
+Kd 1 1 1
+Ka 0.05 0.05 0.05
+Ks 0 0 0
+Ns 10
+map_Kd ../materials/textures/coral_0_diffuse.png
+
+newmtl coral_2
+Kd 1 1 1
+Ka 0.05 0.05 0.05
+Ks 0 0 0
+Ns 10
+map_Kd ../materials/textures/coral_2_diffuse.png
+
+newmtl coral_3
+Kd 1 1 1
+Ka 0.05 0.05 0.05
+Ks 0 0 0
+Ns 10
+map_Kd ../materials/textures/coral_3_diffuse.png
+
+newmtl coral_4
+Kd 1 1 1
+Ka 0.05 0.05 0.05
+Ks 0 0 0
+Ns 10
+map_Kd ../materials/textures/coral_4_diffuse.png

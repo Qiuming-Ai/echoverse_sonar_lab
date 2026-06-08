@@ -3,6 +3,8 @@
 #include <QImage>
 #include <QPixmap>
 
+#include <QtGlobal>
+
 #include <osg/Geode>
 #include <osg/Shape>
 #include <osg/ShapeDrawable>
@@ -13,6 +15,31 @@
 namespace {
 
 constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
+
+QImage imageFromOsgRgba(osg::Image* image) {
+    if (!image || !image->data() || image->s() <= 0 || image->t() <= 0) {
+        return {};
+    }
+    const int bytes_per_line = std::max(1, static_cast<int>(image->getRowSizeInBytes()));
+    return QImage(image->data(), image->s(), image->t(), bytes_per_line, QImage::Format_RGBA8888).copy();
+}
+
+QImage flipOsgImageForDisplay(const QImage& source) {
+    QImage copy = source.copy();
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    return copy.flipped(Qt::Horizontal);
+#else
+    return copy.mirrored();
+#endif
+}
+
+QPixmap pixmapFromProcessedImage(const QImage& source, const QSize& target_size, CameraVisualEffects* effects) {
+    if (source.isNull() || target_size.width() <= 0 || target_size.height() <= 0) {
+        return {};
+    }
+    QImage processed = effects ? effects->postProcessImage(source) : flipOsgImageForDisplay(source);
+    return QPixmap::fromImage(processed).scaled(target_size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+}
 
 osg::ref_ptr<osg::MatrixTransform> createCameraMarkerNode(const osg::Vec4& color) {
     constexpr float kConeLength = 1.2f;
@@ -168,6 +195,16 @@ void CameraModule::updateViews(const Eigen::Vector3d& position, double yaw, doub
     }
 }
 
+void CameraModule::setVisualEffects(CameraVisualEffects* effects) {
+    visual_effects = effects;
+}
+
+void CameraModule::updateVisualEffects(const Eigen::Vector3d& position, double delta_s) {
+    if (visual_effects) {
+        visual_effects->updateParticles(position, delta_s);
+    }
+}
+
 void CameraModule::updateWidgets() {
     for (auto& sc : sub_cameras) {
         if (!sc.label || !sc.image.valid() || !sc.image->data() || sc.image->s() <= 0 || sc.image->t() <= 0) {
@@ -177,11 +214,10 @@ void CameraModule::updateWidgets() {
         if (target_size.width() <= 0 || target_size.height() <= 0) {
             continue;
         }
-        const int bytes_per_line = std::max(1, static_cast<int>(sc.image->getRowSizeInBytes()));
-        const QImage img(sc.image->data(), sc.image->s(), sc.image->t(), bytes_per_line, QImage::Format_RGBA8888);
-        const QImage stable = img.copy().mirrored();
-        sc.label->setPixmap(QPixmap::fromImage(stable).scaled(
-            target_size, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        const QPixmap pixmap = pixmapFromProcessedImage(imageFromOsgRgba(sc.image.get()), target_size, visual_effects);
+        if (!pixmap.isNull()) {
+            sc.label->setPixmap(pixmap);
+        }
     }
 }
 

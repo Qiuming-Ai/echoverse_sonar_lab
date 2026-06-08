@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<sdf version="1.5">
+  <model name="harbor_pipeline_inspection">
+    <static>true</static>
+    <link name="environment_link">
+      <visual name="harbor_pipeline_environment_visual">
+        <geometry>
+          <mesh>
+            <uri>model://harbor_pipeline_inspection/meshes/harbor_pipeline_inspection.obj</uri>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name="harbor_pipeline_environment_collision">
+        <geometry>
+          <mesh>
+            <uri>model://harbor_pipeline_inspection/meshes/harbor_pipeline_inspection.obj</uri>
+          </mesh>
+        </geometry>
+      </collision>
+    </link>
+  </model>
+</sdf>

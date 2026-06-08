@@ -125,6 +125,8 @@ Here \(z_p\) is the pixel normal-echo channel, and \(\sigma(\cdot)\) is a logist
 
 The implementation constants are \(s=18,\ m=2/3\).
 
+This mapping can be disabled in **Settings → Environment → Enable Logistic Response** (`environment.enable_logistic_response` in `.eslproj`). When off, echo values are passed through with linear clamp to \([0,1]\) before bin accumulation.
+
 ### 4.6 Water Absorption and Two-Way Propagation Attenuation
 
 The water absorption coefficient is composed of three terms:

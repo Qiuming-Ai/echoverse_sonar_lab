@@ -10,6 +10,8 @@
 #include "PointCloudTcpStreamer.hpp"
 #include "PointCloudViewerWindow.hpp"
 #include "CameraModule.hpp"
+#include "CameraVisualEffects.hpp"
+#include "MainCameraFileWriter.hpp"
 #include "FlsModule.hpp"
 #include "MbesModule.hpp"
 #include "SssModule.hpp"
@@ -24,12 +26,15 @@
 #include <QApplication>
 #include <QEventLoop>
 #include <QEvent>
+#include <QCheckBox>
 #include <QDialog>
 #include <QDir>
+#include <QDoubleSpinBox>
 #include <QFileInfo>
 #include <QFile>
 #include <QFileDialog>
 #include <QFrame>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QKeyEvent>
@@ -743,6 +748,8 @@ int main(int argc, char** argv) {
     double sonar_sound_speed_mps = global_env_cfg.sound_speed_mps;
     double camera_hfov_deg = app_cfg.camera_system.main_camera.horizontal_fov_deg;
     double camera_vfov_deg = app_cfg.camera_system.main_camera.vertical_fov_deg;
+    bool main_camera_file_output_enabled = app_cfg.camera_system.main_camera.file_output_enabled;
+    standalone_mvp::MainCameraFileWriter main_camera_writer;
     const bool third_person_view_enabled = app_cfg.scene.third_person_view_enabled;
     CameraModule camera_module(app_cfg);
     const standalone_mvp::SubCameraConfig* sss_slot1_cfg = camera_module.findSubCameraByName(
@@ -812,6 +819,9 @@ int main(int argc, char** argv) {
     const std::string world_spec = world_for_scene.toStdString();
     osg::ref_ptr<osg::Group> root =
         standalone_mvp::createSharedSceneGraph(range_m, world_spec);
+    CameraVisualEffects camera_visual_effects;
+    camera_visual_effects.attachToScene(root.get());
+    camera_module.setVisualEffects(&camera_visual_effects);
     report_startup_progress(38, QStringLiteral("Building scene graph..."));
     std::cout << "[gui] scene created, world=" << world_spec
               << ", children=" << root->getNumChildren() << std::endl;
@@ -875,6 +885,7 @@ int main(int argc, char** argv) {
             side_scan_sonar_a->setSonarBeamCount(ss_beam);
             side_scan_sonar_a->enableReverb(global_env_cfg.enable_reverb);
             side_scan_sonar_a->enableSpeckleNoise(global_env_cfg.enable_speckle);
+            side_scan_sonar_a->enableLogisticResponse(global_env_cfg.enable_logistic_response);
             side_scan_sonar_b = std::make_unique<sonar_core::AcousticRaySimulator>(
                 side_scan_range_m,
                 sss_gain_for_sim,
@@ -887,6 +898,7 @@ int main(int argc, char** argv) {
             side_scan_sonar_b->setSonarBeamCount(ss_beam);
             side_scan_sonar_b->enableReverb(global_env_cfg.enable_reverb);
             side_scan_sonar_b->enableSpeckleNoise(global_env_cfg.enable_speckle);
+            side_scan_sonar_b->enableLogisticResponse(global_env_cfg.enable_logistic_response);
             std::cout << "[side_scan] acoustic simulator ready (SSS A/B)" << std::endl;
         } catch (const std::exception& e) {
             side_scan_sonar_a.reset();
@@ -948,6 +960,8 @@ int main(int argc, char** argv) {
             rt->sonar_b->enableReverb(global_env_cfg.enable_reverb);
             rt->sonar_a->enableSpeckleNoise(global_env_cfg.enable_speckle);
             rt->sonar_b->enableSpeckleNoise(global_env_cfg.enable_speckle);
+            rt->sonar_a->enableLogisticResponse(global_env_cfg.enable_logistic_response);
+            rt->sonar_b->enableLogisticResponse(global_env_cfg.enable_logistic_response);
             extra_sss_modules_rt.push_back(std::move(rt));
         } catch (...) {
         }
@@ -997,6 +1011,7 @@ int main(int argc, char** argv) {
               << " pitch=" << configured_pose.pitch
               << " suggested_xyz=(" << base_pos.x() << "," << base_pos.y() << "," << base_pos.z()
               << ")" << std::endl;
+    camera_visual_effects.seedParticleVolume(configured_pose.position, static_cast<double>(range_m) * 1.5);
 
     QWidget sonar_tab_window;
     DockWorkspace* sonar_workspace = nullptr;
@@ -1436,11 +1451,19 @@ int main(int argc, char** argv) {
     auto* replay_floating_layout = new QVBoxLayout(&replay_floating_window);
     replay_floating_layout->setContentsMargins(4, 4, 4, 4);
     replay_floating_layout->setSpacing(0);
-    QLabel* replay_fls_label = nullptr;
-    QLabel* replay_sss_label = nullptr;
-    standalone_mvp::PointCloudViewerWindow* replay_pc_viewer = nullptr;
-    QLabel* replay_3d_intensity_label = nullptr;
-    QLabel* replay_3d_range_label = nullptr;
+    struct ReplayModuleUi {
+        replay_mode::ReplayModuleAssets assets;
+        QLabel* video_label = nullptr;
+        QLabel* intensity_label = nullptr;
+        QLabel* range_label = nullptr;
+        standalone_mvp::PointCloudViewerWindow* pc_viewer = nullptr;
+        std::unique_ptr<cv::VideoCapture> video_cap;
+        std::unique_ptr<cv::VideoCapture> intensity_cap;
+        std::unique_ptr<cv::VideoCapture> range_cap;
+        bool pc_config_applied = false;
+    };
+    std::vector<ReplayModuleUi> replay_modules;
+    replay_mode::ReplayConversionResult replay_conversion;
     auto styleReplayImageLabel = [](QLabel* lb) {
         if (!lb) {
             return;
@@ -1450,15 +1473,10 @@ int main(int argc, char** argv) {
         lb->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         lb->setStyleSheet(QStringLiteral("QLabel{background:#10151f;border:1px solid #3f6c95;}"));
     };
-    std::unique_ptr<cv::VideoCapture> replay_fls_cap;
-    std::unique_ptr<cv::VideoCapture> replay_intensity_cap;
-    std::unique_ptr<cv::VideoCapture> replay_range_cap;
-    replay_mode::ReplayConversionResult replay_conversion;
     int replay_frame_index = 0;
     int replay_max_frame = 0;
     bool replay_playing = true;
     bool replay_mode_active = false;
-    bool replay_pc_config_applied = false;
     enum class ReplayWindowMode {
         Docked = 0,
         Floating,
@@ -1493,72 +1511,89 @@ int main(int argc, char** argv) {
     };
     auto replay_seek = [&](int frame_index) {
         replay_frame_index = std::clamp(frame_index, 0, std::max(0, replay_max_frame));
-        const int pc_frame_idx = replay_mode::mapReplaySourceFrame(
-            replay_frame_index,
-            replay_max_frame,
-            static_cast<int>(replay_conversion.esl3d_frame_offsets.size()));
-        const auto replay_3d_tab_active = [&]() -> bool {
-            if (!replay_pc_viewer || !replay_workspace) {
-                return false;
-            }
-            QTabWidget* tabs = replay_workspace->primaryTabWidget();
-            if (!tabs) {
-                return false;
-            }
-            QWidget* page = replay_pc_viewer->parentWidget();
-            return page && tabs->currentWidget() == page;
-        };
-        if (replay_fls_cap) replay_fls_cap->set(cv::CAP_PROP_POS_FRAMES, replay_frame_index);
-        if (replay_intensity_cap) replay_intensity_cap->set(cv::CAP_PROP_POS_FRAMES, pc_frame_idx);
-        if (replay_range_cap) replay_range_cap->set(cv::CAP_PROP_POS_FRAMES, pc_frame_idx);
-        cv::Mat frame;
-        if (replay_fls_label && replay_fls_label->isVisible() && replay_fls_cap && replay_fls_cap->read(frame)) {
-            show_mat_on_label(frame, replay_fls_label);
-        }
-        if (replay_intensity_cap && replay_3d_intensity_label && replay_3d_intensity_label->isVisible() &&
-            replay_intensity_cap->read(frame)) {
-            show_mat_on_label(frame, replay_3d_intensity_label);
-        }
-        if (replay_range_cap && replay_3d_range_label && replay_3d_range_label->isVisible() &&
-            replay_range_cap->read(frame)) {
-            show_mat_on_label(frame, replay_3d_range_label);
-        }
-        if (replay_pc_viewer && !replay_conversion.esl3d_source_path.isEmpty() &&
-            !replay_conversion.esl3d_frame_offsets.empty()) {
-            standalone_mvp::PointCloudFrame pc_frame;
-            if (replay_mode::readEsl3dPointCloudFrame(
-                    replay_conversion.esl3d_source_path,
-                    replay_conversion.esl3d_frame_offsets,
-                    pc_frame_idx,
-                    pc_frame)) {
-                if (!replay_pc_config_applied) {
-                    replay_pc_viewer->setConfig(pc_frame.config);
-                    replay_pc_config_applied = true;
+
+        for (ReplayModuleUi& mod : replay_modules) {
+            const int src_idx = replay_mode::mapReplaySourceFrame(
+                replay_frame_index, replay_max_frame, mod.assets.frame_count);
+
+            if (mod.assets.media_kind == replay_mode::ReplayMediaKind::Video2d && mod.video_cap && mod.video_label) {
+                mod.video_cap->set(cv::CAP_PROP_POS_FRAMES, src_idx);
+                cv::Mat frame;
+                if (mod.video_cap->read(frame) && !frame.empty()) {
+                    show_mat_on_label(frame, mod.video_label);
                 }
-                replay_pc_viewer->setRangeMeters(pc_frame.config.range_m);
-                replay_pc_viewer->updatePointCloudFrame(pc_frame);
-                if (replay_3d_tab_active()) {
-                    replay_pc_viewer->refreshEmbeddedView();
+            } else if (mod.assets.media_kind == replay_mode::ReplayMediaKind::SssWaterfall && mod.video_label &&
+                       !mod.assets.sss_png_path.isEmpty()) {
+                const QPixmap full(mod.assets.sss_png_path);
+                if (!full.isNull()) {
+                    const int total_rows = std::max(1, mod.assets.sss_row_count);
+                    const int visible_rows =
+                        std::clamp(src_idx + 1, 1, std::min(total_rows, full.height()));
+                    const QPixmap partial = full.copy(0, 0, full.width(), visible_rows);
+                    mod.video_label->setAlignment(Qt::AlignBottom | Qt::AlignHCenter);
+                    mod.video_label->setPixmap(partial.scaled(
+                        mod.video_label->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                }
+            } else if (mod.assets.media_kind == replay_mode::ReplayMediaKind::PointCloud3d) {
+                if (mod.intensity_cap && mod.intensity_label) {
+                    mod.intensity_cap->set(cv::CAP_PROP_POS_FRAMES, src_idx);
+                    cv::Mat frame;
+                    if (mod.intensity_cap->read(frame) && !frame.empty()) {
+                        show_mat_on_label(frame, mod.intensity_label);
+                    }
+                }
+                if (mod.range_cap && mod.range_label) {
+                    mod.range_cap->set(cv::CAP_PROP_POS_FRAMES, src_idx);
+                    cv::Mat frame;
+                    if (mod.range_cap->read(frame) && !frame.empty()) {
+                        show_mat_on_label(frame, mod.range_label);
+                    }
+                }
+                if (mod.pc_viewer && !mod.assets.esl3d_source_path.isEmpty() &&
+                    !mod.assets.esl3d_frame_offsets.empty()) {
+                    standalone_mvp::PointCloudFrame pc_frame;
+                    if (replay_mode::readEsl3dPointCloudFrame(
+                            mod.assets.esl3d_source_path,
+                            mod.assets.esl3d_frame_offsets,
+                            src_idx,
+                            pc_frame)) {
+                        if (!mod.pc_config_applied) {
+                            mod.pc_viewer->setConfig(pc_frame.config);
+                            mod.pc_config_applied = true;
+                        }
+                        mod.pc_viewer->setRangeMeters(pc_frame.config.range_m);
+                        mod.pc_viewer->updatePointCloudFrame(pc_frame);
+                        QTabWidget* tabs = replay_workspace ? replay_workspace->primaryTabWidget() : nullptr;
+                        QWidget* page = mod.pc_viewer->parentWidget();
+                        if (tabs && page && tabs->currentWidget() == page) {
+                            mod.pc_viewer->refreshEmbeddedView();
+                        }
+                    }
                 }
             }
         }
-        if (replay_sss_label && replay_sss_label->isVisible() && !replay_conversion.sss_png_path.isEmpty()) {
-            const QPixmap full(replay_conversion.sss_png_path);
-            if (!full.isNull()) {
-                const int total_rows = std::max(1, replay_conversion.sss_row_count);
-                const int visible_rows =
-                    std::clamp(replay_frame_index + 1, 1, std::min(total_rows, full.height()));
-                const QRect crop(0, 0, full.width(), visible_rows);
-                const QPixmap partial = full.copy(crop);
-                replay_sss_label->setAlignment(Qt::AlignCenter);
-                replay_sss_label->setPixmap(
-                    partial.scaled(replay_sss_label->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-            }
-        }
+
         replay_slider->blockSignals(true);
         replay_slider->setValue(replay_frame_index);
         replay_slider->blockSignals(false);
-        replay_time_label->setText(QStringLiteral("%1 / %2").arg(replay_frame_index).arg(replay_max_frame));
+        if (replay_conversion.session_duration_seconds > 1e-6 && replay_max_frame > 0) {
+            const double total_s = replay_conversion.session_duration_seconds;
+            const double current_s =
+                total_s * static_cast<double>(replay_frame_index) / static_cast<double>(replay_max_frame);
+            replay_time_label->setText(
+                QStringLiteral("%1 / %2 s").arg(current_s, 0, 'f', 1).arg(total_s, 0, 'f', 1));
+        } else if (!replay_conversion.timeline_us.empty()) {
+            const qint64 t0 = replay_conversion.timeline_us.front();
+            const qint64 t1 = replay_conversion.timeline_us.back();
+            const qint64 current = replay_conversion.timeline_us[static_cast<std::size_t>(
+                std::clamp(replay_frame_index, 0, static_cast<int>(replay_conversion.timeline_us.size()) - 1))];
+            const double current_s = static_cast<double>(current - t0) / 1'000'000.0;
+            const double total_s = std::max(0.0, static_cast<double>(t1 - t0) / 1'000'000.0);
+            replay_time_label->setText(
+                QStringLiteral("%1 / %2 s").arg(current_s, 0, 'f', 1).arg(total_s, 0, 'f', 1));
+        } else {
+            replay_time_label->setText(QStringLiteral("%1 / %2").arg(replay_frame_index).arg(replay_max_frame));
+        }
     };
     auto shutdown_replay_ui = [&]() {
         replay_timer.stop();
@@ -1624,6 +1659,54 @@ int main(int argc, char** argv) {
 
     auto* viewer_host = new QWidget(viewer_frame);
     viewer_host->setStyleSheet("QWidget{background:#000000;border:1px solid #3f6c95;}");
+    auto* camera_effects_panel = new QWidget(viewer_frame);
+    camera_effects_panel->setStyleSheet("QWidget{background:#0b1018;color:#dce9ff;border:1px solid #35506b;}");
+    auto makeCameraEffectControl = [&](const QString& title, int default_value) {
+        auto* box = new QWidget(camera_effects_panel);
+        auto* layout = new QHBoxLayout(box);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(4);
+        auto* label = new QLabel(title, box);
+        label->setStyleSheet("QLabel{color:#cfe8ff;font-size:10px;font-weight:600;background:transparent;}");
+        label->setMinimumWidth(52);
+        auto* slider = new QSlider(Qt::Horizontal, box);
+        slider->setRange(0, 100);
+        slider->setValue(default_value);
+        slider->setFixedWidth(72);
+        slider->setFixedHeight(14);
+        slider->setStyleSheet(
+            "QSlider::groove:horizontal{height:4px;background:#1c2a3a;border-radius:2px;}"
+            "QSlider::handle:horizontal{width:10px;margin:-3px 0;background:#79b7ff;border-radius:5px;}");
+        layout->addWidget(label);
+        layout->addWidget(slider);
+        return std::pair<QWidget*, QSlider*>(box, slider);
+    };
+    auto* camera_effects_layout = new QHBoxLayout(camera_effects_panel);
+    camera_effects_layout->setContentsMargins(8, 4, 8, 4);
+    camera_effects_layout->setSpacing(10);
+    const auto fog_control = makeCameraEffectControl(QStringLiteral("Fog"), 0);
+    const auto light_control = makeCameraEffectControl(QStringLiteral("Light"), 50);
+    const auto particle_control = makeCameraEffectControl(QStringLiteral("Particles"), 25);
+    camera_effects_layout->addWidget(fog_control.first);
+    camera_effects_layout->addWidget(light_control.first);
+    camera_effects_layout->addWidget(particle_control.first);
+    camera_effects_layout->addStretch(1);
+    QSlider* fog_slider = fog_control.second;
+    QSlider* light_slider = light_control.second;
+    QSlider* particle_slider = particle_control.second;
+    camera_visual_effects.setFogAmount(static_cast<float>(fog_slider->value()) / 100.0f);
+    camera_visual_effects.setLightAmount(static_cast<float>(light_slider->value()) / 100.0f);
+    camera_visual_effects.setParticleAmount(static_cast<float>(particle_slider->value()) / 100.0f);
+    QObject::connect(fog_slider, &QSlider::valueChanged, [&](int value) {
+        camera_visual_effects.setFogAmount(static_cast<float>(value) / 100.0f);
+    });
+    QObject::connect(light_slider, &QSlider::valueChanged, [&](int value) {
+        camera_visual_effects.setLightAmount(static_cast<float>(value) / 100.0f);
+    });
+    QObject::connect(particle_slider, &QSlider::valueChanged, [&](int value) {
+        camera_visual_effects.setParticleAmount(static_cast<float>(value) / 100.0f);
+    });
+    camera_effects_panel->show();
     auto* subcamera_panel = new QWidget(viewer_frame);
     subcamera_panel->setStyleSheet("QWidget{background:#0d121a;border:1px solid #35506b;}");
     auto* subcamera_layout = new QVBoxLayout(subcamera_panel);
@@ -1653,10 +1736,56 @@ int main(int argc, char** argv) {
     for (std::size_t i = 0; i < sub_cameras.size() && i < subcamera_labels.size(); ++i) {
         sub_cameras[i].label = subcamera_labels[i];
     }
-    subcamera_panel->show();
-    auto* capture_label = new QLabel("Optical capture image", viewer_frame);
-    capture_label->setStyleSheet("QLabel{color:#ffffff;background:rgba(0,0,0,120);padding:4px 8px;border:1px solid #808080;}");
-    capture_label->show();
+    subcamera_panel->setVisible(false);
+    bool subcamera_drawer_visible = false;
+    auto* subcamera_drawer_toggle = new QPushButton(QStringLiteral("Show Sub Cameras"), viewer_frame);
+    subcamera_drawer_toggle->setCursor(Qt::PointingHandCursor);
+    subcamera_drawer_toggle->setStyleSheet(
+        "QPushButton{background:rgba(9,20,35,200);color:#eaf2ff;border:1px solid #4e6d90;border-radius:6px;padding:3px 10px;}"
+        "QPushButton:hover{background:rgba(20,35,58,220);}");
+    subcamera_drawer_toggle->show();
+    bool camera_settings_visible = false;
+    auto* camera_settings_toggle = new QPushButton(QStringLiteral("Show Settings"), viewer_frame);
+    camera_settings_toggle->setCursor(Qt::PointingHandCursor);
+    camera_settings_toggle->setStyleSheet(
+        "QPushButton{background:rgba(9,20,35,200);color:#eaf2ff;border:1px solid #4e6d90;border-radius:6px;padding:3px 10px;}"
+        "QPushButton:hover{background:rgba(20,35,58,220);}");
+    auto* camera_settings_panel = new QFrame(viewer_frame);
+    camera_settings_panel->setStyleSheet(
+        "QFrame{background:rgba(9,20,35,220);color:#eaf2ff;border:1px solid #4e6d90;border-radius:6px;}");
+    camera_settings_panel->setVisible(false);
+    auto makeCameraSettingSpin = [&](double min_v, double max_v, double step, double value) {
+        auto* spin = new QDoubleSpinBox(camera_settings_panel);
+        spin->setRange(min_v, max_v);
+        spin->setSingleStep(step);
+        spin->setDecimals(step < 1.0 ? 1 : 0);
+        spin->setValue(value);
+        spin->setFixedWidth(72);
+        spin->setStyleSheet(
+            "QDoubleSpinBox{background:#101a28;color:#eaf2ff;border:1px solid #4e6d90;border-radius:4px;padding:1px 4px;}");
+        return spin;
+    };
+    auto* camera_settings_form = new QFormLayout(camera_settings_panel);
+    camera_settings_form->setContentsMargins(8, 6, 8, 6);
+    camera_settings_form->setSpacing(4);
+    camera_settings_form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    QDoubleSpinBox* camera_yaw_spin =
+        makeCameraSettingSpin(-360.0, 360.0, 0.5, radToDeg(commanded_pose.yaw));
+    QDoubleSpinBox* camera_pitch_spin =
+        makeCameraSettingSpin(-89.0, 89.0, 0.5, radToDeg(commanded_pose.pitch));
+    QDoubleSpinBox* camera_hfov_spin =
+        makeCameraSettingSpin(5.0, 179.0, 0.5, camera_hfov_deg);
+    QDoubleSpinBox* camera_vfov_spin =
+        makeCameraSettingSpin(5.0, 179.0, 0.5, camera_vfov_deg);
+    camera_settings_form->addRow(QStringLiteral("Yaw (deg)"), camera_yaw_spin);
+    camera_settings_form->addRow(QStringLiteral("Pitch (deg)"), camera_pitch_spin);
+    camera_settings_form->addRow(QStringLiteral("Horizontal FOV (deg)"), camera_hfov_spin);
+    camera_settings_form->addRow(QStringLiteral("Vertical FOV (deg)"), camera_vfov_spin);
+    auto* main_camera_file_output_checkbox = new QCheckBox(QStringLiteral("Enable File Output"), camera_settings_panel);
+    main_camera_file_output_checkbox->setChecked(main_camera_file_output_enabled);
+    main_camera_file_output_checkbox->setStyleSheet("QCheckBox{color:#eaf2ff;background:transparent;}");
+    camera_settings_form->addRow("", main_camera_file_output_checkbox);
+    camera_settings_toggle->show();
 #if defined(_WIN32)
     auto* gw_win32 = dynamic_cast<osgViewer::GraphicsWindowWin32*>(viewer.getCamera()->getGraphicsContext());
     QWindow* osg_foreign_window = gw_win32 ? QWindow::fromWinId(reinterpret_cast<WId>(gw_win32->getHWND())) : nullptr;
@@ -1671,6 +1800,15 @@ int main(int argc, char** argv) {
     } else {
         std::cout << "[gui] warning: failed to embed OSG native window into Qt container" << std::endl;
     }
+
+    constexpr int kCameraEffectsPanelHeight = 30;
+    auto last_visual_effects_tick = std::chrono::steady_clock::now();
+    auto updateCameraVisualEffects = [&](const PoseState& active_pose) {
+        const auto now = std::chrono::steady_clock::now();
+        const double elapsed_s = std::chrono::duration<double>(now - last_visual_effects_tick).count();
+        last_visual_effects_tick = now;
+        camera_module.updateVisualEffects(active_pose.position, elapsed_s);
+    };
 
     auto update_viewport_layout = [&]() {
         if (info_panel) {
@@ -1687,28 +1825,108 @@ int main(int argc, char** argv) {
         if (area.width() <= 0 || area.height() <= 0) {
             return;
         }
-        const int side_w = std::clamp(area.width() / 4, 180, 340);
-        const QRect main_area(area.x(), area.y(), std::max(80, area.width() - side_w - 6), area.height());
-        subcamera_panel->setGeometry(main_area.right() + 6, area.y(), side_w, area.height());
+        const int side_w = subcamera_drawer_visible ? std::clamp(area.width() / 4, 180, 340) : 0;
+        const int side_gap = subcamera_drawer_visible ? 6 : 0;
+        const QRect main_area(
+            area.x(), area.y(), std::max(80, area.width() - side_w - side_gap), area.height());
+        if (subcamera_drawer_visible) {
+            subcamera_panel->setGeometry(main_area.right() + side_gap, area.y(), side_w, area.height());
+            subcamera_panel->setVisible(true);
+            subcamera_panel->raise();
+        } else {
+            subcamera_panel->setVisible(false);
+        }
+        const QRect main_view_area(
+            main_area.x(),
+            main_area.y(),
+            main_area.width(),
+            std::max(80, main_area.height() - kCameraEffectsPanelHeight - 6));
+        camera_effects_panel->setGeometry(
+            main_area.x(),
+            main_view_area.bottom() + 4,
+            main_area.width(),
+            kCameraEffectsPanelHeight);
 
         const double target_aspect =
             std::tan(degToRad(camera_hfov_deg) * 0.5) / std::tan(degToRad(camera_vfov_deg) * 0.5);
-        int w = main_area.width();
+        int w = main_view_area.width();
         int h = static_cast<int>(std::lround(static_cast<double>(w) / target_aspect));
-        if (h > main_area.height()) {
-            h = main_area.height();
+        if (h > main_view_area.height()) {
+            h = main_view_area.height();
             w = static_cast<int>(std::lround(static_cast<double>(h) * target_aspect));
         }
-        const int x = main_area.x() + (main_area.width() - w) / 2;
-        const int y = main_area.y() + (main_area.height() - h) / 2;
+        const int x = main_view_area.x() + (main_view_area.width() - w) / 2;
+        const int y = main_view_area.y() + (main_view_area.height() - h) / 2;
         viewer_host->setGeometry(x, y, w, h);
         if (osg_container) {
             osg_container->setGeometry(viewer_host->rect());
         }
-        capture_label->move(main_area.x() + 8, main_area.y() + 8);
+        camera_settings_toggle->move(main_view_area.x() + 8, main_view_area.y() + 8);
+        camera_settings_toggle->raise();
+        subcamera_drawer_toggle->move(
+            main_view_area.x() + 8, main_view_area.y() + camera_settings_toggle->height() + 6);
+        subcamera_drawer_toggle->raise();
+        if (camera_settings_visible) {
+            const int panel_w = 240;
+            const int panel_h = camera_settings_panel->sizeHint().height();
+            camera_settings_panel->setGeometry(
+                main_view_area.x() + 8,
+                subcamera_drawer_toggle->y() + subcamera_drawer_toggle->height() + 6,
+                panel_w,
+                std::max(130, panel_h));
+            camera_settings_panel->raise();
+        }
         viewer.getCamera()->setViewport(new osg::Viewport(0, 0, std::max(1, w), std::max(1, h)));
         viewer.getCamera()->setProjectionMatrixAsPerspective(camera_vfov_deg, target_aspect, 0.1, 10000.0);
         camera_module.updateViewports();
+    };
+
+    auto applyCameraSettingsFromUi = [&]() {
+        commanded_pose.yaw = degToRad(camera_yaw_spin->value());
+        commanded_pose.pitch = degToRad(camera_pitch_spin->value());
+        camera_hfov_deg = camera_hfov_spin->value();
+        camera_vfov_deg = camera_vfov_spin->value();
+        syncTrackballToPose(trackball.get(), commanded_pose);
+        setCameraViewFromPose(viewer.getCamera(), commanded_pose);
+        update_viewport_layout();
+    };
+    QObject::connect(camera_settings_toggle, &QPushButton::clicked, [&]() {
+        camera_settings_visible = !camera_settings_visible;
+        camera_settings_panel->setVisible(camera_settings_visible);
+        camera_settings_toggle->setText(camera_settings_visible ? QStringLiteral("Hide Settings")
+                                                                  : QStringLiteral("Show Settings"));
+        if (camera_settings_visible) {
+            camera_yaw_spin->setValue(radToDeg(commanded_pose.yaw));
+            camera_pitch_spin->setValue(radToDeg(commanded_pose.pitch));
+            camera_hfov_spin->setValue(camera_hfov_deg);
+            camera_vfov_spin->setValue(camera_vfov_deg);
+        }
+        update_viewport_layout();
+    });
+    QObject::connect(subcamera_drawer_toggle, &QPushButton::clicked, [&]() {
+        subcamera_drawer_visible = !subcamera_drawer_visible;
+        subcamera_drawer_toggle->setText(subcamera_drawer_visible ? QStringLiteral("Hide Sub Cameras")
+                                                                  : QStringLiteral("Show Sub Cameras"));
+        update_viewport_layout();
+    });
+    QObject::connect(camera_yaw_spin, qOverload<double>(&QDoubleSpinBox::valueChanged), [&](double) {
+        applyCameraSettingsFromUi();
+    });
+    QObject::connect(camera_pitch_spin, qOverload<double>(&QDoubleSpinBox::valueChanged), [&](double) {
+        applyCameraSettingsFromUi();
+    });
+    QObject::connect(camera_hfov_spin, qOverload<double>(&QDoubleSpinBox::valueChanged), [&](double) {
+        applyCameraSettingsFromUi();
+    });
+    QObject::connect(camera_vfov_spin, qOverload<double>(&QDoubleSpinBox::valueChanged), [&](double) {
+        applyCameraSettingsFromUi();
+    });
+    QObject::connect(main_camera_file_output_checkbox, &QCheckBox::toggled, [&](bool enabled) {
+        main_camera_file_output_enabled = enabled;
+        app_cfg.camera_system.main_camera.file_output_enabled = enabled;
+    });
+    auto record_main_camera_frame_if_needed = [&]() {
+        main_camera_writer.writeCapturedFrameIfReady();
     };
 
     standalone_mvp::SettingsDialog settings_dialog(&dashboard_window);
@@ -1805,73 +2023,60 @@ int main(int argc, char** argv) {
         }
         QString err;
         replay_mode::ReplayConversionResult conv;
-        if (!replay_mode::loadOrConvert(folder, conv, err)) {
+        if (!replay_mode::loadOrConvert(folder, conv, err, &dashboard_window)) {
             QMessageBox::warning(&dashboard_window, QStringLiteral("回放模式"), err.isEmpty() ? QStringLiteral("加载失败。") : err);
             return;
         }
         replay_conversion = conv;
-        replay_pc_config_applied = false;
-        replay_fls_label = nullptr;
-        replay_sss_label = nullptr;
-        replay_pc_viewer = nullptr;
-        replay_3d_intensity_label = nullptr;
-        replay_3d_range_label = nullptr;
+        replay_modules.clear();
         replay_workspace->restoreSingle();
         if (replay_workspace->primaryTabWidget()) {
             replay_workspace->primaryTabWidget()->clear();
         }
-        replay_fls_cap.reset();
-        replay_intensity_cap.reset();
-        replay_range_cap.reset();
-        replay_max_frame = 0;
-        if (conv.has_fls && !conv.fls_mp4_path.isEmpty()) {
-            replay_fls_cap = std::make_unique<cv::VideoCapture>(conv.fls_mp4_path.toStdString());
-            replay_max_frame = std::max(replay_max_frame, static_cast<int>(replay_fls_cap->get(cv::CAP_PROP_FRAME_COUNT)) - 1);
+        replay_max_frame = replay_mode::computeReplayMaxFrame(conv);
+
+        for (const replay_mode::ReplayModuleAssets& assets : conv.modules) {
+            ReplayModuleUi mod;
+            mod.assets = assets;
             auto* page = new QWidget();
             auto* layout = new QVBoxLayout(page);
             layout->setContentsMargins(0, 0, 0, 0);
-            replay_fls_label = new QLabel(page);
-            styleReplayImageLabel(replay_fls_label);
-            layout->addWidget(replay_fls_label, 1);
-            replay_workspace->addTab(page, QStringLiteral("FLS"));
-        }
-        if (conv.has_sss) {
-            replay_max_frame = std::max(replay_max_frame, std::max(0, conv.sss_row_count - 1));
-            auto* page = new QWidget();
-            auto* layout = new QVBoxLayout(page);
-            layout->setContentsMargins(0, 0, 0, 0);
-            replay_sss_label = new QLabel(page);
-            styleReplayImageLabel(replay_sss_label);
-            layout->addWidget(replay_sss_label, 1);
-            replay_workspace->addTab(page, QStringLiteral("SSS"));
-        }
-        if (conv.has_3d && !conv.intensity_mp4_path.isEmpty() && !conv.range_mp4_path.isEmpty()) {
-            replay_intensity_cap = std::make_unique<cv::VideoCapture>(conv.intensity_mp4_path.toStdString());
-            replay_range_cap = std::make_unique<cv::VideoCapture>(conv.range_mp4_path.toStdString());
-            const int video_frames = std::max(
-                static_cast<int>(replay_intensity_cap->get(cv::CAP_PROP_FRAME_COUNT)),
-                static_cast<int>(replay_range_cap->get(cv::CAP_PROP_FRAME_COUNT)));
-            replay_max_frame = std::max(replay_max_frame, video_frames - 1);
-            if (conv.esl3d_frame_count > 0) {
-                replay_max_frame = std::max(replay_max_frame, conv.esl3d_frame_count - 1);
+
+            if (assets.media_kind == replay_mode::ReplayMediaKind::Video2d && !assets.video_path.isEmpty()) {
+                mod.video_cap = std::make_unique<cv::VideoCapture>(assets.video_path.toStdString());
+                mod.video_label = new QLabel(page);
+                styleReplayImageLabel(mod.video_label);
+                layout->addWidget(mod.video_label, 1);
+            } else if (assets.media_kind == replay_mode::ReplayMediaKind::SssWaterfall &&
+                       !assets.sss_png_path.isEmpty()) {
+                mod.video_label = new QLabel(page);
+                styleReplayImageLabel(mod.video_label);
+                layout->addWidget(mod.video_label, 1);
+            } else if (assets.media_kind == replay_mode::ReplayMediaKind::PointCloud3d &&
+                       !assets.intensity_mp4_path.isEmpty() && !assets.range_mp4_path.isEmpty()) {
+                mod.intensity_cap = std::make_unique<cv::VideoCapture>(assets.intensity_mp4_path.toStdString());
+                mod.range_cap = std::make_unique<cv::VideoCapture>(assets.range_mp4_path.toStdString());
+                mod.pc_viewer = new standalone_mvp::PointCloudViewerWindow(page);
+                mod.pc_viewer->setMinimumHeight(260);
+                mod.pc_viewer->setEmbeddedReplayMode(true);
+                mod.intensity_label = new QLabel(page);
+                mod.range_label = new QLabel(page);
+                styleReplayImageLabel(mod.intensity_label);
+                styleReplayImageLabel(mod.range_label);
+                layout->addWidget(mod.pc_viewer, 2);
+                auto* previews = new QHBoxLayout();
+                previews->addWidget(mod.intensity_label, 1);
+                previews->addWidget(mod.range_label, 1);
+                layout->addLayout(previews, 1);
+            } else {
+                delete page;
+                continue;
             }
-            auto* page = new QWidget();
-            auto* v = new QVBoxLayout(page);
-            v->setContentsMargins(0, 0, 0, 0);
-            replay_pc_viewer = new standalone_mvp::PointCloudViewerWindow(page);
-            replay_pc_viewer->setMinimumHeight(260);
-            replay_pc_viewer->setEmbeddedReplayMode(true);
-            replay_3d_intensity_label = new QLabel(page);
-            replay_3d_range_label = new QLabel(page);
-            styleReplayImageLabel(replay_3d_intensity_label);
-            styleReplayImageLabel(replay_3d_range_label);
-            v->addWidget(replay_pc_viewer, 2);
-            auto* h = new QHBoxLayout();
-            h->addWidget(replay_3d_intensity_label, 1);
-            h->addWidget(replay_3d_range_label, 1);
-            v->addLayout(h, 1);
-            replay_workspace->addTab(page, QStringLiteral("3D Sonar"));
+
+            replay_workspace->addTab(page, replay_mode::replayTabTitle(assets));
+            replay_modules.push_back(std::move(mod));
         }
+
         const int replay_tab_count =
             (replay_workspace && replay_workspace->primaryTabWidget())
                 ? replay_workspace->primaryTabWidget()->count()
@@ -1891,6 +2096,7 @@ int main(int argc, char** argv) {
         replay_play_pause_btn->setText(QStringLiteral("Pause"));
         scene_edit_pauses_sonar.store(true);
         replay_slider->setRange(0, std::max(0, replay_max_frame));
+        replay_timer.setInterval(replay_mode::computeReplayIntervalMs(conv, replay_max_frame));
         replay_seek(0);
         dashboard_window.hide();
         sonar_floating_window.hide();
@@ -1946,6 +2152,9 @@ int main(int argc, char** argv) {
         return modules;
     };
     auto session_has_file_output = [&](const std::vector<standalone_mvp::SonarModuleConfig>& modules) {
+        if (main_camera_file_output_enabled) {
+            return true;
+        }
         for (const auto& mod : modules) {
             if (!mod.enabled) {
                 continue;
@@ -2087,10 +2296,19 @@ int main(int argc, char** argv) {
     };
     auto start_all_output_sessions = [&]() -> bool {
         const std::vector<standalone_mvp::SonarModuleConfig> modules_for_tcp = collect_runtime_module_configs();
-        if (!standalone_mvp::anyModuleOutputEnabled(modules_for_tcp)) {
+        if (!standalone_mvp::anyModuleOutputEnabled(modules_for_tcp, main_camera_file_output_enabled)) {
             return false;
         }
         output_controller.startSession(project_dir, modules_for_tcp);
+        if (main_camera_file_output_enabled) {
+            const QString main_camera_dir =
+                standalone_mvp::buildMainCameraOutputDir(output_controller.sessionRoot());
+            const QString main_camera_path = QDir(main_camera_dir).filePath(QStringLiteral("main_camera.mp4"));
+            main_camera_writer.applyConfig(true, main_camera_path.toStdString());
+            main_camera_writer.setOutputFps(viewer_max_fps > 0.0 ? viewer_max_fps : 20.0);
+            main_camera_writer.attachToCamera(viewer.getCamera());
+            main_camera_writer.setSessionActive(true);
+        }
         start_module_output_if_needed(fls_module);
         for (auto& extra : extra_fls_modules_rt) {
             start_module_output_if_needed(*extra);
@@ -2148,9 +2366,13 @@ int main(int argc, char** argv) {
         summary.duration_seconds = duration_seconds;
         summary.file_output_active = session_has_file_output(modules_for_flags);
         summary.tcp_output_active = session_has_tcp_output(modules_for_flags);
+        summary.main_camera_file_output = main_camera_file_output_enabled;
+        summary.main_camera_frames = main_camera_writer.framesWritten();
         summary.modules = stats;
         standalone_mvp::writeSessionRecordingSummary(summary);
 
+        main_camera_writer.setSessionActive(false);
+        main_camera_writer.close();
         fls_module.endOutputSession();
         for (auto& extra : extra_fls_modules_rt) {
             extra->endOutputSession();
@@ -2200,12 +2422,12 @@ int main(int argc, char** argv) {
             return;
         }
         const std::vector<standalone_mvp::SonarModuleConfig> modules = collect_runtime_module_configs();
-        const bool any_output = standalone_mvp::anyModuleOutputEnabled(modules);
+        const bool any_output = standalone_mvp::anyModuleOutputEnabled(modules, main_camera_file_output_enabled);
         if (!path_mode_enabled_ui && !any_output) {
             QMessageBox::warning(
                 &dashboard_window,
                 QStringLiteral("Output"),
-                QStringLiteral("No File or TCP output is enabled.\nEnable output in sonar advanced settings first."));
+                QStringLiteral("No File or TCP output is enabled.\nEnable output in sonar advanced settings or main camera settings first."));
             return;
         }
         if (any_output) {
@@ -2464,6 +2686,7 @@ int main(int argc, char** argv) {
             primary_mbes_cfg.beam_height_deg = mbes_beam_height_deg;
             app_cfg.camera_system.main_camera.horizontal_fov_deg = camera_hfov_deg;
             app_cfg.camera_system.main_camera.vertical_fov_deg = camera_vfov_deg;
+            app_cfg.camera_system.main_camera.file_output_enabled = main_camera_file_output_enabled;
             app_cfg.camera = app_cfg.camera_system.main_camera;
             primary_sss_cfg = sss_module.module_cfg.sss_config;
             if (primary_fls_module_idx >= 0 && primary_fls_module_idx < static_cast<int>(app_cfg.sonar_modules.size())) {
@@ -2720,6 +2943,28 @@ int main(int argc, char** argv) {
         mbes_module.setEnvironmentConfig(global_env_cfg);
         for (auto& extra : extra_fls_modules_rt) extra->setEnvironmentConfig(global_env_cfg);
         for (auto& extra : extra_mbes_modules_rt) extra->setEnvironmentConfig(global_env_cfg);
+        if (side_scan_sonar_a) {
+            side_scan_sonar_a->enableReverb(global_env_cfg.enable_reverb);
+            side_scan_sonar_a->enableSpeckleNoise(global_env_cfg.enable_speckle);
+            side_scan_sonar_a->enableLogisticResponse(global_env_cfg.enable_logistic_response);
+        }
+        if (side_scan_sonar_b) {
+            side_scan_sonar_b->enableReverb(global_env_cfg.enable_reverb);
+            side_scan_sonar_b->enableSpeckleNoise(global_env_cfg.enable_speckle);
+            side_scan_sonar_b->enableLogisticResponse(global_env_cfg.enable_logistic_response);
+        }
+        for (auto& extra_sss : extra_sss_modules_rt) {
+            if (extra_sss->sonar_a) {
+                extra_sss->sonar_a->enableReverb(global_env_cfg.enable_reverb);
+                extra_sss->sonar_a->enableSpeckleNoise(global_env_cfg.enable_speckle);
+                extra_sss->sonar_a->enableLogisticResponse(global_env_cfg.enable_logistic_response);
+            }
+            if (extra_sss->sonar_b) {
+                extra_sss->sonar_b->enableReverb(global_env_cfg.enable_reverb);
+                extra_sss->sonar_b->enableSpeckleNoise(global_env_cfg.enable_speckle);
+                extra_sss->sonar_b->enableLogisticResponse(global_env_cfg.enable_logistic_response);
+            }
+        }
         path_editor->setPathConfig(app_cfg.path_mode);
         restart_requested = true;
         settings_dialog.setRestartHintVisible(true);
@@ -2745,6 +2990,28 @@ int main(int argc, char** argv) {
         mbes_module.setEnvironmentConfig(global_env_cfg);
         for (auto& extra : extra_fls_modules_rt) extra->setEnvironmentConfig(global_env_cfg);
         for (auto& extra : extra_mbes_modules_rt) extra->setEnvironmentConfig(global_env_cfg);
+        if (side_scan_sonar_a) {
+            side_scan_sonar_a->enableReverb(global_env_cfg.enable_reverb);
+            side_scan_sonar_a->enableSpeckleNoise(global_env_cfg.enable_speckle);
+            side_scan_sonar_a->enableLogisticResponse(global_env_cfg.enable_logistic_response);
+        }
+        if (side_scan_sonar_b) {
+            side_scan_sonar_b->enableReverb(global_env_cfg.enable_reverb);
+            side_scan_sonar_b->enableSpeckleNoise(global_env_cfg.enable_speckle);
+            side_scan_sonar_b->enableLogisticResponse(global_env_cfg.enable_logistic_response);
+        }
+        for (auto& extra_sss : extra_sss_modules_rt) {
+            if (extra_sss->sonar_a) {
+                extra_sss->sonar_a->enableReverb(global_env_cfg.enable_reverb);
+                extra_sss->sonar_a->enableSpeckleNoise(global_env_cfg.enable_speckle);
+                extra_sss->sonar_a->enableLogisticResponse(global_env_cfg.enable_logistic_response);
+            }
+            if (extra_sss->sonar_b) {
+                extra_sss->sonar_b->enableReverb(global_env_cfg.enable_reverb);
+                extra_sss->sonar_b->enableSpeckleNoise(global_env_cfg.enable_speckle);
+                extra_sss->sonar_b->enableLogisticResponse(global_env_cfg.enable_logistic_response);
+            }
+        }
         path_editor->setPathConfig(app_cfg.path_mode);
         restart_requested = true;
         settings_dialog.setRestartHintVisible(true);
@@ -2838,6 +3105,7 @@ int main(int argc, char** argv) {
         syncTrackballToPose(trackball.get(), active_pose);
         setCameraViewFromPose(viewer.getCamera(), active_pose);
         camera_module.updateViews(active_pose.position, active_pose.yaw, active_pose.pitch);
+        updateCameraVisualEffects(active_pose);
         path_editor->setLivePose(active_pose.position.x(), active_pose.position.y(), active_pose.yaw);
         fls_module.setPointCloudRenderBlocked(true);
         for (auto& extra : extra_fls_modules_rt) {
@@ -2848,6 +3116,7 @@ int main(int argc, char** argv) {
             extra->setPointCloudRenderBlocked(true);
         }
         viewer.frame();
+        record_main_camera_frame_if_needed();
         if (third_viewer) {
             third_viewer->frame();
         }
@@ -3012,6 +3281,7 @@ int main(int argc, char** argv) {
             syncTrackballToPose(trackball.get(), active_pose);
             setCameraViewFromPose(viewer.getCamera(), active_pose);
             camera_module.updateViews(active_pose.position, active_pose.yaw, active_pose.pitch);
+            updateCameraVisualEffects(active_pose);
             path_editor->setLivePose(active_pose.position.x(), active_pose.position.y(), active_pose.yaw);
             fls_module.setPointCloudRenderBlocked(true);
             for (auto& extra : extra_fls_modules_rt) extra->setPointCloudRenderBlocked(true);
@@ -3027,6 +3297,7 @@ int main(int argc, char** argv) {
                 last_viewer_frame_tick = std::chrono::steady_clock::now();
             }
             viewer.frame();
+            record_main_camera_frame_if_needed();
             if (third_viewer) {
                 third_viewer->frame();
             }
@@ -3266,6 +3537,7 @@ int main(int argc, char** argv) {
         syncTrackballToPose(trackball.get(), active_pose);
         setCameraViewFromPose(viewer.getCamera(), active_pose);
         camera_module.updateViews(active_pose.position, active_pose.yaw, active_pose.pitch);
+        updateCameraVisualEffects(active_pose);
         path_editor->setLivePose(active_pose.position.x(), active_pose.position.y(), active_pose.yaw);
         fls_module.setPointCloudRenderBlocked(true);
         for (auto& extra : extra_fls_modules_rt) extra->setPointCloudRenderBlocked(true);
@@ -3281,6 +3553,7 @@ int main(int argc, char** argv) {
             last_viewer_frame_tick = std::chrono::steady_clock::now();
         }
         viewer.frame();
+        record_main_camera_frame_if_needed();
         if (third_viewer) {
             third_viewer->frame();
         }

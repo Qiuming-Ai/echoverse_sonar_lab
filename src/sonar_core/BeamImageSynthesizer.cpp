@@ -53,7 +53,10 @@ void BeamImageSynthesizer::accumulateBinEnergyFromRoi(cv::Mat& cv_image, std::ve
     for (int pixelIndex = 0; pixelIndex < cv_image.cols * cv_image.rows; ++pixelIndex) {
         const int binIndex = static_cast<int>(channelData[pixelIndex * 3 + 1] *
                                               static_cast<float>(sonar_bin_count - 1));
-        const float weightedIntensity = (1.0f / depthHistogram[binIndex]) * logisticResponse(channelData[pixelIndex * 3]);
+        const float rawEcho = channelData[pixelIndex * 3];
+        const float mappedEcho = logistic_response_enabled_ ? logisticResponse(rawEcho)
+                                                          : std::clamp(rawEcho, 0.0f, 1.0f);
+        const float weightedIntensity = (1.0f / depthHistogram[binIndex]) * mappedEcho;
         bins[binIndex] += weightedIntensity;
     }
 }
@@ -79,7 +82,8 @@ void BeamImageSynthesizer::applyMultiplicativeSpeckle(std::vector<float>& bins) 
 
 float BeamImageSynthesizer::logisticResponse(float x) {
     const float slope = 18.0f;
-    const float midpoint = 0.666666667f;
+    // const float midpoint = 0.666666667f;
+    const float midpoint = 0.5f;
     const float centeredValue = (x - midpoint) * slope;
     return (0.5f * std::tanh(0.5f * centeredValue) + 0.5f);
 }
@@ -87,6 +91,43 @@ float BeamImageSynthesizer::logisticResponse(float x) {
 float BeamImageSynthesizer::computeBinSamplingInterval(float range) {
     const float twoWayTravelTime = range * 2.0f / sound_speed_mps;
     return twoWayTravelTime / sonar_bin_count;
+}
+
+void BeamImageSynthesizer::applyBeamAxisGaussianSmooth(std::vector<float>& bins) {
+    if (sonar_beam_count < 2 || sonar_bin_count == 0 ||
+        bins.size() != static_cast<size_t>(sonar_beam_count) * static_cast<size_t>(sonar_bin_count)) {
+        return;
+    }
+
+    constexpr float kSigmaBeams = 1.0f;
+    const int radius = std::max(1, static_cast<int>(std::ceil(3.0f * kSigmaBeams)));
+    const int kernel_size = radius * 2 + 1;
+    std::vector<float> kernel(static_cast<size_t>(kernel_size));
+    float kernel_sum = 0.0f;
+    for (int i = -radius; i <= radius; ++i) {
+        const float weight = std::exp(-0.5f * static_cast<float>(i * i) / (kSigmaBeams * kSigmaBeams));
+        kernel[static_cast<size_t>(i + radius)] = weight;
+        kernel_sum += weight;
+    }
+    for (float& weight : kernel) {
+        weight /= kernel_sum;
+    }
+
+    const std::vector<float> source = bins;
+    const int beam_count_i = static_cast<int>(sonar_beam_count);
+    const int bin_count_i = static_cast<int>(sonar_bin_count);
+    for (int bin = 0; bin < bin_count_i; ++bin) {
+        for (int beam = 0; beam < beam_count_i; ++beam) {
+            float value = 0.0f;
+            for (int k = -radius; k <= radius; ++k) {
+                const int sample_beam = std::clamp(beam + k, 0, beam_count_i - 1);
+                value += kernel[static_cast<size_t>(k + radius)] *
+                         source[static_cast<size_t>(sample_beam) * static_cast<size_t>(bin_count_i) +
+                                static_cast<size_t>(bin)];
+            }
+            bins[static_cast<size_t>(beam) * static_cast<size_t>(bin_count_i) + static_cast<size_t>(bin)] = value;
+        }
+    }
 }
 
 void BeamImageSynthesizer::generateBeamIntensityBins(const cv::Mat& cv_image,
@@ -104,6 +145,9 @@ void BeamImageSynthesizer::generateBeamIntensityBins(const cv::Mat& cv_image,
         }
         std::memcpy(&bins[sonar_bin_count * beamIndex], &singleBeamBins[0], sonar_bin_count * sizeof(float));
     }
+    if (beam_axis_smoothing_enabled_) {
+        applyBeamAxisGaussianSmooth(bins);
+    }
 }
 
 sonar_types_v2::samples::Sonar BeamImageSynthesizer::buildSonarSample(const std::vector<float>& bins, float range) {
@@ -119,6 +163,14 @@ sonar_types_v2::samples::Sonar BeamImageSynthesizer::buildSonarSample(const std:
 
     cached_last_sonar = out;
     return out;
+}
+
+void BeamImageSynthesizer::enableLogisticResponse(bool enable) {
+    logistic_response_enabled_ = enable;
+}
+
+void BeamImageSynthesizer::enableBeamAxisSmoothing(bool enable) {
+    beam_axis_smoothing_enabled_ = enable;
 }
 
 void BeamImageSynthesizer::applyOutputGainClamp(std::vector<float>& bins, float gain) {

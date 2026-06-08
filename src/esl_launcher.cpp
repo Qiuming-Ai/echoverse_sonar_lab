@@ -6,6 +6,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -20,6 +21,7 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QRegularExpression>
+#include <QSet>
 #include <QSettings>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -39,6 +41,40 @@ QString worldKeyFromWizardText(const QString& raw) {
         return fi.completeBaseName();
     }
     return t;
+}
+
+QStringList discoverWorldOptions() {
+    QStringList scene_roots;
+#ifdef STANDALONE_SIMULATION_DIR
+    scene_roots << QStringLiteral(STANDALONE_SIMULATION_DIR) + QStringLiteral("/uwmodels/scenes");
+#endif
+    scene_roots << (QDir::currentPath() + QStringLiteral("/uwmodels/scenes"));
+    scene_roots << (QCoreApplication::applicationDirPath() + QStringLiteral("/uwmodels/scenes"));
+
+    QSet<QString> world_names;
+    for (const QString& root : scene_roots) {
+        QDir root_dir(root);
+        if (!root_dir.exists()) {
+            continue;
+        }
+        QDirIterator it(root_dir.absolutePath(), QStringList() << QStringLiteral("*.world"), QDir::Files,
+                        QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QFileInfo info(it.next());
+            if (!info.baseName().isEmpty()) {
+                world_names.insert(info.baseName());
+            }
+        }
+    }
+    if (world_names.isEmpty()) {
+        return QStringList{QStringLiteral("ssiv_bahia")};
+    }
+    QStringList options = world_names.values();
+    options.sort(Qt::CaseInsensitive);
+    if (!options.contains(QStringLiteral("ssiv_bahia"), Qt::CaseInsensitive)) {
+        options.prepend(QStringLiteral("ssiv_bahia"));
+    }
+    return options;
 }
 
 QString findRepoScenesRootPath() {
@@ -215,8 +251,13 @@ public:
         auto* scene_form = new QFormLayout();
         world_combo_ = new QComboBox();
         world_combo_->setEditable(true);
-        world_combo_->addItems({QStringLiteral("mangalia"), QStringLiteral("ssiv_bahia"), QStringLiteral("tank")});
-        world_combo_->setCurrentText(QStringLiteral("mangalia"));
+        const QStringList world_options = discoverWorldOptions();
+        world_combo_->addItems(world_options);
+        const QString default_world =
+            world_options.contains(QStringLiteral("ssiv_bahia"), Qt::CaseInsensitive)
+                ? QStringLiteral("ssiv_bahia")
+                : world_options.value(0, QStringLiteral("ssiv_bahia"));
+        world_combo_->setCurrentText(default_world);
         scene_form->addRow(QStringLiteral("Scene World:"), world_combo_);
         pos_x_ = createSpin(-100000.0, 100000.0, -609.11);
         pos_y_ = createSpin(-100000.0, 100000.0, 77.27);

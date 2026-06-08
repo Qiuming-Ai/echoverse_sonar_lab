@@ -56,7 +56,9 @@ private:
     QCheckBox* enable_reverb_;
     QCheckBox* enable_speckle_;
     QCheckBox* enable_attenuation_;
+    QCheckBox* enable_logistic_response_;
     QCheckBox* enable_antialiasing_;
+    QCheckBox* enable_beam_axis_smoothing_;
     QCheckBox* enable_2d_fls_;
     QDoubleSpinBox* max_fps_;
     QDoubleSpinBox* viewer_max_fps_;
@@ -66,6 +68,7 @@ private:
     QDoubleSpinBox* camera_pitch_deg_;
     QDoubleSpinBox* camera_horizontal_fov_deg_;
     QDoubleSpinBox* camera_vertical_fov_deg_;
+    QCheckBox* camera_file_output_enabled_;
     QTableWidget* aux_camera_table_;
     QPushButton* add_camera_button_;
     QPushButton* remove_camera_button_;

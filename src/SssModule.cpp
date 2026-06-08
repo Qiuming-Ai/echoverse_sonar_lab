@@ -71,6 +71,7 @@ QJsonObject environmentConfigJson(const standalone_mvp::EnvironmentConfig& cfg) 
     o["enable_reverb"] = cfg.enable_reverb;
     o["enable_speckle"] = cfg.enable_speckle;
     o["enable_attenuation"] = cfg.enable_attenuation;
+    o["enable_logistic_response"] = cfg.enable_logistic_response;
     o["sound_speed_mps"] = cfg.sound_speed_mps;
     return o;
 }

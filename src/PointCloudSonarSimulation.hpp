@@ -40,6 +40,7 @@ struct PointCloudSonarConfig {
     bool enable_attenuation = true;
     bool enable_reverb = true;
     bool enable_speckle = true; // reserved for future point intensity/noise extension.
+    bool enable_logistic_response = true;
     double temperature_c = 25.0;
     double salinity_ppt = 0.0;
     double acidity_ph = 8.0;

@@ -41,8 +41,11 @@ float applySpeckleIfEnabled(float intensity, bool enable_speckle) {
     return std::clamp(intensity * noise, 0.0f, 1.0f);
 }
 
-float rockSigmoid(float x) {
-    // Keep amplitude mapping consistent with sonar_core::BeamImageSynthesizer::sigmoid.
+float mapEchoAmplitude(float x, bool enable_logistic) {
+    if (!enable_logistic) {
+        return std::clamp(x, 0.0f, 1.0f);
+    }
+    // Keep amplitude mapping consistent with sonar_core::BeamImageSynthesizer::logisticResponse.
     constexpr float beta = 18.0f;
     constexpr float x0 = 0.666666667f;
     const float t = (x - x0) * beta;
@@ -237,7 +240,7 @@ PointCloudFrame PointCloudSonarSimulation::simulatePointCloud(const Eigen::Affin
             const float* px = cv_image.ptr<float>(row) + (col * 3);
             // Keep channel interpretation aligned with sonar_core::Sonar::accumulateBinsFromShader:
             // ptr[i*3 + 0] -> amplitude source, ptr[i*3 + 1] -> normalized distance.
-            float intensity = std::clamp(rockSigmoid(px[0]), 0.0f, 1.0f);
+            float intensity = std::clamp(mapEchoAmplitude(px[0], cfg.enable_logistic_response), 0.0f, 1.0f);
             const float normalized_distance = px[1];
             if (!std::isfinite(normalized_distance) || normalized_distance <= 0.0f || normalized_distance > 1.0f) {
                 continue;

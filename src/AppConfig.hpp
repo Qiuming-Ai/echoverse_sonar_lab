@@ -84,7 +84,11 @@ struct EnvironmentConfig {
     bool enable_reverb = true;
     bool enable_speckle = true;
     bool enable_attenuation = true;
+    /// S-curve contrast on shader echo channel before bin accumulation (off = linear clamp).
+    bool enable_logistic_response = true;
     bool enable_antialiasing = true;
+    /// 1D Gaussian along beam axis after FLS/MBES bin synthesis (reduces angular stair-step artifacts).
+    bool enable_beam_axis_smoothing = true;
     double sound_speed_mps = 1500.0;
 };
 
@@ -93,6 +97,7 @@ struct CameraConfig {
     double pitch_deg = 30.0;
     double horizontal_fov_deg = 130.0;
     double vertical_fov_deg = 20.0;
+    bool file_output_enabled = false;
 };
 
 struct SubCameraConfig {

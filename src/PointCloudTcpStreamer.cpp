@@ -289,6 +289,7 @@ QByteArray PointCloudTcpStreamer::buildPacket(const PointCloudFrame& frame, std:
     env["depth_m"] = c.depth_m;
     env["enable_reverb"] = c.enable_reverb;
     env["enable_speckle"] = c.enable_speckle;
+    env["enable_logistic_response"] = c.enable_logistic_response;
     env["sound_speed_mps"] = c.sound_speed_mps;
     metadata["environment"] = env;
 
