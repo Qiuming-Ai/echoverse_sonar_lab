@@ -50,13 +50,24 @@ If your vcpkg root is not in `PATH`, use the full path to `vcpkg.exe`.
 - Supported: Windows PowerShell 5.1 also works for the commands in this README
 - No special PowerShell version is strictly required by this project; CMake and MSVC toolchain availability are the key requirements
 
-## Third-Party Library Links (Referenced by CMake)
+## Third-Party Software Versions
 
-- [Eigen](https://github.com/eigenteam/eigen-git-mirror)
+| Component | Version | Source |
+|-----------|---------|--------|
+| Eigen | 5.0.1-dev+master | Bundled header-only library in `third_party/eigen` |
+| Qt (`qtbase`) | 6.10.2 | vcpkg (`vcpkg.json`) |
+| OpenCV (`opencv4`) | 4.12.0 | vcpkg (`vcpkg.json`) |
+| OpenSceneGraph (`osg`) | 3.6.5 (`collada`, `plugins`) | vcpkg (`vcpkg.json`) |
+
+Upstream links:
+
+- [Eigen](https://gitlab.com/libeigen/eigen)
 - [OpenCV](https://github.com/opencv/opencv)
 - [OpenSceneGraph](https://github.com/openscenegraph/OpenSceneGraph)
 - [Qt](https://github.com/qt/qtbase)
 - [vcpkg](https://github.com/microsoft/vcpkg)
+
+Versions above reflect the bundled Eigen snapshot and the vcpkg baseline used by `third_party/vcpkg`. Exact resolved versions may vary slightly if you use an external vcpkg root; check `build_vcpkg/vcpkg-manifest-install.log` after configure.
 
 ## Quick Start (Windows PowerShell, relative paths)
 
