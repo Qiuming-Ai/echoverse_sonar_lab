@@ -68,11 +68,6 @@ namespace frame_helper
 	return cv::Mat(frame.size.height,frame.size.width, getOpenCvType(frame), (void *)frame.getImageConstPtr());
     }
 
-    //TODO
-    //use exceptions
-    //use opencv for rotation
-    //remove static variable (not thread save!!!)
-    //move hole stuff to the end of the file (history will be lost)
     bool FrameHelper::convertPJPGToRGB24(const uint8_t *source, uint8_t *target_buffer,const size_t source_size, const int width, const int height)
     {
         #ifdef WITH_LIBV4l2

@@ -14,7 +14,6 @@ Known third-party asset sources currently referenced by this repository include:
 - romulogcerqueira/simulation-uwmodels (release v1.0)
 - Gazebo / Gazebo model database related assets
 
-For assets whose exact license terms are not fully confirmed from materials
-currently present in this repository. Use and
-redistribution of those assets are subject to original upstream terms.
-
+For any asset whose exact license terms are not fully documented in this repository,
+users must consult the original upstream source and comply with its applicable terms
+before use or redistribution.

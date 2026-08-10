@@ -9,11 +9,6 @@
 #include "CalibrationCv.h"
 //#include <sonar_types_v2/CompressedFrame.hpp>
 
-//TODO 
-//at the moment some functions call copyImageIndependantAttributes
-//automatically
-//this should be replaced by a flag
-
 namespace frame_helper
 {
     class FrameHelper

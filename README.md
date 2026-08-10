@@ -40,11 +40,11 @@ waveform used by the MATLAB beamforming path.
 
 ## Supported and Tested Environments
 
-| Platform | Status | Tested environment |
+| Platform | Validation status | Tested environment |
 |---|---|---|
-| Windows | Supported | Windows 11, Visual Studio 2022, vcpkg |
-| Linux | Supported | Ubuntu 24.04, GCC 13.3, Qt 6.10.2, OpenCV 4.12.0 with Qt 6, OpenSceneGraph 3.6.5 |
-| Arch Linux | Expected to work with compatible dependency versions, but not yet independently verified | Clean-clone verification remains part of the revision checklist |
+| Windows | Build and runtime verified | Windows 11, Visual Studio 2022, vcpkg |
+| Linux (Ubuntu) | Build and runtime verified | Ubuntu 24.04, GCC 13.3, CMake 3.30.5, Qt 6.10.2, OpenCV 4.12.0 with Qt 6, OpenSceneGraph 3.6.5 |
+| Linux (Arch) | Build and runtime verified | Arch Linux, kernel 7.1.6-arch1-1, GCC 16.1.1, CMake 4.4.2, Qt 6.11.1, OpenCV 5.0.0 with Qt 6, OpenSceneGraph 3.6.5-34 |
 
 The Linux GUI implementation does not share a native X11 window with Qt. The main
 OSG camera renders offscreen and is displayed in a Qt widget, which also works on
@@ -102,23 +102,33 @@ project path to `echoverse_sonar_lab.exe`.
 
 ## Quick Start: Linux
 
-The tested Ubuntu build uses Qt 6.10.2 and an OpenCV 4.12.0 build linked only to Qt 6.
-This matters because some distribution OpenCV `highgui` packages pull Qt 5 into a
-Qt 6 application and can crash before `main()`.
+Install a C++17 compiler, CMake, Git, Qt 6 development files, OpenCV development
+files, OpenSceneGraph/OpenThreads, Boost.Regex, OpenGL/Mesa development files, and
+the XCB cursor runtime using your system package manager. Qt must be version 6.9 or
+newer. OpenCV `highgui` must link to Qt 6 only; loading Qt 5 and Qt 6 into the same
+process can cause a crash before `main()`.
 
 ```bash
 git submodule update --init --recursive
 
-cmake -S . -B build_linux \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DQt6_DIR="$HOME/Qt/6.10.2/gcc_64/lib/cmake/Qt6" \
-  -DOpenCV_DIR="$HOME/opencv-4.12.0/lib/cmake/opencv4"
-cmake --build build_linux -j2
+cmake -S . -B build_linux -DCMAKE_BUILD_TYPE=Release
+cmake --build build_linux --parallel 2
 ./build_linux/esl_launcher
 ```
 
-See [`docs/linux_build.md`](docs/linux_build.md) for the tested Ubuntu dependency
-setup, Qt/OpenCV compatibility checks, virtual-display smoke tests, and troubleshooting.
+When Qt or OpenCV is installed outside the system search path, add the corresponding
+CMake package directories without assuming a distribution-specific location:
+
+```bash
+cmake -S . -B build_linux \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DQt6_DIR=/path/to/lib/cmake/Qt6 \
+  -DOpenCV_DIR=/path/to/lib/cmake/opencv4
+```
+
+See [`docs/linux_build.md`](docs/linux_build.md) for dependency roles, verified
+distribution/version records, Qt/OpenCV compatibility checks, headless smoke tests,
+and troubleshooting.
 
 ## MATLAB Offline Echo and Image Pipeline
 
@@ -172,14 +182,14 @@ point counts, output byte estimates, waveform dimensions, and CPU/CUDA backend l
 See [`docs/performance_and_scalability.md`](docs/performance_and_scalability.md) for
 the complete experiment protocol and current scalability limitations.
 
-A three-repeat Windows characterization of the prepared pipeline-inspection and coral
-projects is preserved in
-[`benchmarks/results/2026-08-10`](benchmarks/results/2026-08-10/README.md), together
-with six raw CSV files and a PowerShell summary script. The tested scenes contained
-52,096 and 591,116 estimated loaded triangles, respectively. Both sustained the
-configured 5 fps GUI-loop cap with mean effective rates of 4.78 and 4.75 fps. These
-results cover the C++ runtime with file/TCP output disabled; they are not MATLAB,
-CUDA, uncapped-throughput, or universal scene-limit claims.
+A three-repeat Windows characterization was completed for the prepared
+pipeline-inspection and coral projects. The tested scenes contained 52,096 and
+591,116 estimated loaded triangles, respectively, and both sustained the configured
+5 fps GUI-loop cap. These measurements cover the C++ runtime with file/TCP output
+disabled; they are not MATLAB, CUDA, uncapped-throughput, or universal scene-limit
+claims. Generated result tables, CSV files, execution logs, and benchmark records are
+kept outside the source repository in the
+[performance and benchmark data archive](https://drive.google.com/drive/folders/1FLh2osev_QVqSBR7Gu0UJmejG-zf4_zh?usp=drive_link).
 
 ## Output Session Layout
 
@@ -205,18 +215,12 @@ When file or TCP output is enabled, the application creates:
 
 ## AI-Assisted Development Disclosure
 
-Generative-AI assistance was used during selected development stages. Early GUI and
-UX code drafting used DeepSeek V4 Pro Token together with VS Code Copilot. The core
-C++ sonar-image generation functionality and the MATLAB waveform-generation
-functionality were designed and implemented by the author. OpenAI Codex was later
-used for cross-platform integration, performance instrumentation, documentation, and
-revision organization.
-
-Human maintainers remain responsible for scientific and architectural decisions,
-source review, builds, tests, numerical interpretation, licensing, and release
-approval. No performance result is treated as valid until it has been produced by an
-executed experiment and checked by an author. The detailed, versioned disclosure and
-verification procedure are in
+Generative-AI tools assisted with selected coding and writing tasks. The principal
+scientific ideas, software architecture, core sonar-simulation and signal-processing
+functions, experimental work, and interpretation were completed by the authors. All
+AI-assisted material was reviewed and edited by the authors, and all accepted code
+changes and reported results were verified through human-led builds, tests, and
+executed experiments. The disclosure and verification principles are described in
 [`docs/ai_assisted_development.md`](docs/ai_assisted_development.md).
 
 ## License

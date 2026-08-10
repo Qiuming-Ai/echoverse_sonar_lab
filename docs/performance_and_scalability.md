@@ -98,9 +98,9 @@ and 591,350 for the coral project; OpenSceneGraph may rescale that texture and r
 sonar-image accuracy. The completed runs are performance evidence, not evidence that
 image fidelity is preserved above the threshold.
 
-The complete protocol, hardware description, pooled mean/median/p95 tables, raw CSV
-hashes, and reproduction command are stored in
-[`../benchmarks/results/2026-08-10/README.md`](../benchmarks/results/2026-08-10/README.md).
+Generated result tables, raw CSV files, execution logs, and benchmark records are kept
+outside the source repository in the
+[performance and benchmark data archive](https://drive.google.com/drive/folders/1FLh2osev_QVqSBR7Gu0UJmejG-zf4_zh?usp=drive_link).
 The current measurements do not cover MATLAB CPU/CUDA execution, file/TCP I/O,
 profiler overhead, Linux performance, or a failure threshold for larger scenes.
 
@@ -160,11 +160,13 @@ Do not describe the current GUI or MATLAB frame loop as HPC-parallel. A future r
 could add headless batch mode, deterministic partitioning, scheduler templates, and
 result merging before claiming native HPC support.
 
-## 8. Publication Checklist
+## 8. Reporting and Interpretation Rules
 
-- Preserve raw CSV files with the revision artifacts.
-- Add a script or notebook that derives every reported table cell from those CSVs.
-- Never copy timing values from debug logs without checking run completeness.
-- Separate renderer, point-cloud, MATLAB echo-synthesis, and HDF5/image stages.
+- Preserve raw CSV files in the external revision-data archive.
+- Derive reported table cells from those CSV files with the accompanying summary
+  script or notebook.
+- Check run completeness before using timing values from execution logs.
+- Report renderer, point-cloud, MATLAB echo-synthesis, and HDF5/image stages
+  separately.
 - State whether CUDA MEX was compiled and actually selected.
 - Report failed or memory-limited large runs as limits rather than silently excluding them.
