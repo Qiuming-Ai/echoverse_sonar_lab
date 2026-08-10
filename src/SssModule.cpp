@@ -2,6 +2,7 @@
 
 #include "Esl2dFileWriter.hpp"
 #include "RockSonarPlotView.hpp"
+#include "PerformanceProfiler.hpp"
 #include "SideScanControlPanel.hpp"
 
 #include <sonar_types_v2/echoverse_sonar_types.hpp>
@@ -11,6 +12,7 @@
 #include <QWidget>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 
@@ -336,6 +338,7 @@ void SssModule::tickFromCameraRuntimes(const std::vector<SubCameraRuntime>& sub_
     if (it_slot1 == sub_cameras.end() || it_slot2 == sub_cameras.end() || !it_slot1->camera || !it_slot2->camera) {
         return;
     }
+    const auto performance_start = std::chrono::steady_clock::now();
 
     const Eigen::Affine3d pose_a = bodyAffineFromCameraViewMatrix(it_slot1->camera->getViewMatrix());
     const Eigen::Affine3d pose_b = bodyAffineFromCameraViewMatrix(it_slot2->camera->getViewMatrix());
@@ -372,4 +375,17 @@ void SssModule::tickFromCameraRuntimes(const std::vector<SubCameraRuntime>& sub_
         params.sonar_module_name = module_cfg.name;
         esl2d_file_writer_.writeSssFrame(sb, sa, params);
     }
+    standalone_mvp::PerformanceSample performance;
+    performance.component = "sss_realtime_ping_pair";
+    performance.module = module_cfg.name.toStdString();
+    performance.frame_index = frame_index;
+    performance.duration_ms = std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - performance_start)
+                                  .count();
+    performance.output_points = sa.bins.size() + sb.bins.size();
+    performance.output_bytes = (sa.bins.size() + sb.bins.size()) * sizeof(float);
+    performance.beam_count = sa.beam_count;
+    performance.bin_count = sa.bin_count;
+    performance.range_m = runtime_range_m;
+    standalone_mvp::PerformanceProfiler::instance().record(performance);
 }

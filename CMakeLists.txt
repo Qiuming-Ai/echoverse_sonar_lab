@@ -20,7 +20,7 @@ if(USE_REAL_SONAR_CORE)
     set(REPO_SIMULATION_DIR "${CMAKE_CURRENT_LIST_DIR}/src" CACHE PATH "Path to local simulation source directory")
     file(TO_CMAKE_PATH "${REPO_SIMULATION_DIR}" REPO_SIMULATION_DIR_CMAKE)
     set(SONAR_TYPES_V2_DIR "${CMAKE_CURRENT_LIST_DIR}/src/sonar_types_v2" CACHE PATH "Path containing sonar_types_v2 headers")
-    set(EIGEN3_INCLUDE_DIR "${CMAKE_CURRENT_LIST_DIR}/third_party/eigen" CACHE PATH "Path to Eigen headers" FORCE)
+    set(EIGEN3_INCLUDE_DIR "${CMAKE_CURRENT_LIST_DIR}/third_party/eigen" CACHE PATH "Path to Eigen headers")
     set(OSG_ROOT "$ENV{OSG_ROOT}" CACHE PATH "OpenSceneGraph installation root")
     set(OPENTHREADS_ROOT "$ENV{OPENTHREADS_ROOT}" CACHE PATH "OpenThreads installation root")
     set(OpenCV_ROOT "$ENV{OpenCV_ROOT}" CACHE PATH "OpenCV installation root")
@@ -34,7 +34,10 @@ if(USE_REAL_SONAR_CORE)
     endif()
 
     if(NOT EXISTS "${EIGEN3_INCLUDE_DIR}/Eigen/Core")
-        message(FATAL_ERROR "USE_REAL_SONAR_CORE=ON requires Eigen headers, missing ${EIGEN3_INCLUDE_DIR}/Eigen/Core")
+        message(FATAL_ERROR
+            "USE_REAL_SONAR_CORE=ON requires Eigen 5 headers, missing ${EIGEN3_INCLUDE_DIR}/Eigen/Core.\n"
+            "Clone with submodules or run: git submodule update --init --recursive\n"
+            "You may also set -DEIGEN3_INCLUDE_DIR=/path/to/eigen if a compatible Eigen 5 checkout is already available.")
     endif()
 endif()
 
@@ -154,33 +157,20 @@ if(USE_REAL_SONAR_CORE)
 endif()
 
 if(USE_REAL_SONAR_CORE)
-    option(BUILD_MULTIBEAM_GUI "Build echoverse_sonar_lab viewer (needs Qt5 or Qt6 Widgets; see vcpkg.json qtbase)" ON)
+    option(BUILD_MULTIBEAM_GUI "Build echoverse_sonar_lab viewer (requires Qt 6.9+ Widgets and Network)" ON)
     if(BUILD_MULTIBEAM_GUI)
         set(MVP_QT_WIDGETS_LIB "")
         set(MVP_QT_NETWORK_LIB "")
-        find_package(Qt6 QUIET COMPONENTS Widgets)
+        find_package(Qt6 6.9 QUIET COMPONENTS Widgets Network)
         if(Qt6_FOUND)
             set(MVP_QT_WIDGETS_LIB Qt6::Widgets)
-            find_package(Qt6 QUIET COMPONENTS Network)
-            if(Qt6Network_FOUND)
-                set(MVP_QT_NETWORK_LIB Qt6::Network)
-            endif()
-        else()
-            find_package(Qt5 QUIET COMPONENTS Widgets)
-            if(Qt5_FOUND)
-                set(MVP_QT_WIDGETS_LIB Qt5::Widgets)
-                find_package(Qt5 QUIET COMPONENTS Network)
-                if(Qt5Network_FOUND)
-                    set(MVP_QT_NETWORK_LIB Qt5::Network)
-                endif()
-            endif()
+            set(MVP_QT_NETWORK_LIB Qt6::Network)
         endif()
         if(NOT MVP_QT_WIDGETS_LIB OR NOT MVP_QT_NETWORK_LIB)
             message(FATAL_ERROR
-                "echoverse_sonar_lab requires Qt5 or Qt6 Widgets + Network, but not all components were found.\n"
-                "  vcpkg: ensure 'qtbase' is installed for your triplet (see simulation/standalone_mvp/vcpkg.json), e.g.\n"
-                "    ${CMAKE_CURRENT_LIST_DIR}/third_party/vcpkg/vcpkg install qtbase:x64-windows\n"
-                "  Or set Qt6_DIR or Qt5_DIR to the directory containing Qt*Config.cmake .\n"
+                "echoverse_sonar_lab requires Qt 6.9+ Widgets and Network.\n"
+                "  vcpkg: install the dependencies in vcpkg.json for the selected triplet.\n"
+                "  Linux/custom Qt: set Qt6_DIR to the directory containing Qt6Config.cmake.\n"
                 "  To build without the GUI: configure with -DBUILD_MULTIBEAM_GUI=OFF")
         endif()
         set(CMAKE_AUTOMOC ON)
@@ -199,6 +189,7 @@ if(USE_REAL_SONAR_CORE)
         src/SonarTcpHub.cpp
         src/SonarOutputUtil.cpp
         src/OutputController.cpp
+        src/PerformanceProfiler.cpp
         src/ReplayMode.cpp
         src/StartupProgressDialog.cpp
         src/PointCloudViewerWindow.cpp
@@ -208,6 +199,7 @@ if(USE_REAL_SONAR_CORE)
         src/MbesModule.cpp
         src/SssModule.cpp
         src/WorldFileIo.cpp
+        src/MainCameraView.cpp
         src/SceneEditorPanel.cpp
         src/PathEditorPanel.cpp
         src/PathFollower.cpp

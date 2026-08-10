@@ -110,6 +110,11 @@ SSS is displayed as a stitched port/starboard waterfall image:
 
 ## 5.1 Main Camera Display
 
+- On Windows, the main OSG view uses the native Windows embedding path.
+- On Linux, `MainCameraView` renders OSG offscreen and presents the captured image in a
+  Qt widget. This path avoids a separate OSG top-level window and works on X11 and
+  Wayland.
+
 - Main-camera rendering is embedded in the dashboard center area.
 - The display area adapts to the main camera FOV aspect ratio to avoid stretching.
 - Main-camera view is used both for user observation and as the default sonar pose source (when bound to Main Camera).
@@ -231,7 +236,10 @@ When output session stops:
 2. Session summary is written to:  
    `Sonar Data/<timestamp>/recording_summary.json`
 3. TCP listeners are shut down.
-4. For FLS/MBES modules with ESL3D file output enabled, offline post-process may run and write artifacts under:  
+4. For FLS/MBES modules with ESL3D file output enabled, the recorded range/intensity
+   point-cloud representation may be passed to the MATLAB offline post-process, which
+   performs channel echo synthesis and final signal-level image reconstruction. It may
+   write artifacts under:
    `<module>/Waveform Data/`
 
 ### 9.4 Operator Checklist

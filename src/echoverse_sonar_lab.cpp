@@ -22,6 +22,8 @@
 #include "ReplayMode.hpp"
 #include "SonarOutputUtil.hpp"
 #include "StartupProgressDialog.hpp"
+#include "MainCameraView.hpp"
+#include "PerformanceProfiler.hpp"
 
 #include <QApplication>
 #include <QEventLoop>
@@ -819,6 +821,8 @@ int main(int argc, char** argv) {
     const std::string world_spec = world_for_scene.toStdString();
     osg::ref_ptr<osg::Group> root =
         standalone_mvp::createSharedSceneGraph(range_m, world_spec);
+    standalone_mvp::PerformanceProfiler::instance().recordSceneInventory(
+        standalone_mvp::collectSceneInventory(root.get()));
     CameraVisualEffects camera_visual_effects;
     camera_visual_effects.attachToScene(root.get());
     camera_module.setVisualEffects(&camera_visual_effects);
@@ -1100,12 +1104,39 @@ int main(int argc, char** argv) {
     report_startup_progress(75, QStringLiteral("Initializing 3D viewer..."));
     osgViewer::Viewer viewer;
     viewer.setSceneData(root);
+    std::unique_ptr<MainCameraView> main_camera_view;
+#if defined(_WIN32)
     viewer.setUpViewInWindow(0, 0, viewer_w, viewer_h);
+#else
+    // Linux/other Unix desktops: render offscreen and display the captured image
+    // inside the Qt dashboard. This avoids native-window sharing on Wayland/X11.
+    main_camera_view = std::make_unique<MainCameraView>();
+    if (!main_camera_view->setup(&viewer, viewer_w, viewer_h)) {
+        std::cout << "[gui] warning: offscreen main camera unavailable; using a standalone window" << std::endl;
+        main_camera_view.reset();
+        viewer.setUpViewInWindow(0, 0, viewer_w, viewer_h);
+    } else {
+        std::cout << "[gui] main camera renders offscreen (embedded in Qt UI)" << std::endl;
+    }
+#endif
     // Keep OSG rendering in one thread. With embedded Qt windows and a second OSG viewer
     // (point cloud window), default threaded models can intermittently crash in osg.dll.
     viewer.setThreadingModel(osgViewer::Viewer::SingleThreaded);
     viewer.getCamera()->setClearColor(osg::Vec4(0.03f, 0.05f, 0.08f, 1.0f));
     viewer.getCamera()->setCullMask(kSceneMask);
+    auto render_main_viewer_frame = [&](int performance_frame_index) {
+        const auto performance_start = std::chrono::steady_clock::now();
+        viewer.frame();
+        standalone_mvp::PerformanceSample performance;
+        performance.component = "main_viewer_frame";
+        performance.frame_index = performance_frame_index;
+        performance.duration_ms = std::chrono::duration<double, std::milli>(
+                                      std::chrono::steady_clock::now() - performance_start)
+                                      .count();
+        performance.width = static_cast<std::uint64_t>(std::max(1, viewer_w));
+        performance.height = static_cast<std::uint64_t>(std::max(1, viewer_h));
+        standalone_mvp::PerformanceProfiler::instance().record(performance);
+    };
     osg::ref_ptr<osgGA::TrackballManipulator> trackball = new osgGA::TrackballManipulator();
     viewer.setCameraManipulator(trackball.get());
     std::unique_ptr<osgViewer::Viewer> third_viewer;
@@ -1789,9 +1820,6 @@ int main(int argc, char** argv) {
 #if defined(_WIN32)
     auto* gw_win32 = dynamic_cast<osgViewer::GraphicsWindowWin32*>(viewer.getCamera()->getGraphicsContext());
     QWindow* osg_foreign_window = gw_win32 ? QWindow::fromWinId(reinterpret_cast<WId>(gw_win32->getHWND())) : nullptr;
-#else
-    QWindow* osg_foreign_window = nullptr;
-#endif
     QWidget* osg_container = nullptr;
     if (osg_foreign_window) {
         osg_container = QWidget::createWindowContainer(osg_foreign_window, viewer_host);
@@ -1800,6 +1828,16 @@ int main(int argc, char** argv) {
     } else {
         std::cout << "[gui] warning: failed to embed OSG native window into Qt container" << std::endl;
     }
+#else
+    if (main_camera_view) {
+        main_camera_view->setParent(viewer_host);
+        main_camera_view->setGeometry(viewer_host->rect());
+        main_camera_view->setFocusPolicy(Qt::StrongFocus);
+        main_camera_view->show();
+    } else {
+        std::cout << "[gui] warning: main camera view unavailable" << std::endl;
+    }
+#endif
 
     constexpr int kCameraEffectsPanelHeight = 30;
     auto last_visual_effects_tick = std::chrono::steady_clock::now();
@@ -1858,9 +1896,16 @@ int main(int argc, char** argv) {
         const int x = main_view_area.x() + (main_view_area.width() - w) / 2;
         const int y = main_view_area.y() + (main_view_area.height() - h) / 2;
         viewer_host->setGeometry(x, y, w, h);
+#if defined(_WIN32)
         if (osg_container) {
             osg_container->setGeometry(viewer_host->rect());
         }
+#else
+        if (main_camera_view) {
+            main_camera_view->setGeometry(viewer_host->rect());
+            main_camera_view->resizeRenderTarget(std::max(1, w), std::max(1, h));
+        }
+#endif
         camera_settings_toggle->move(main_view_area.x() + 8, main_view_area.y() + 8);
         camera_settings_toggle->raise();
         subcamera_drawer_toggle->move(
@@ -2639,9 +2684,15 @@ int main(int argc, char** argv) {
     dashboard_window.installEventFilter(&key_filter);
     viewer_frame->installEventFilter(&key_filter);
     viewer_host->installEventFilter(&key_filter);
+#if defined(_WIN32)
     if (osg_container) {
         osg_container->installEventFilter(&key_filter);
     }
+#else
+    if (main_camera_view) {
+        main_camera_view->installEventFilter(&key_filter);
+    }
+#endif
     dashboard_window.setFocusPolicy(Qt::StrongFocus);
     fls_module.connectWidgetSignals();
     mbes_module.connectWidgetSignals();
@@ -3115,7 +3166,12 @@ int main(int argc, char** argv) {
         for (auto& extra : extra_mbes_modules_rt) {
             extra->setPointCloudRenderBlocked(true);
         }
-        viewer.frame();
+        render_main_viewer_frame(0);
+#if !defined(_WIN32)
+        if (main_camera_view) {
+            main_camera_view->refresh();
+        }
+#endif
         record_main_camera_frame_if_needed();
         if (third_viewer) {
             third_viewer->frame();
@@ -3296,7 +3352,12 @@ int main(int argc, char** argv) {
                 }
                 last_viewer_frame_tick = std::chrono::steady_clock::now();
             }
-            viewer.frame();
+            render_main_viewer_frame(frames);
+#if !defined(_WIN32)
+            if (main_camera_view) {
+                main_camera_view->refresh();
+            }
+#endif
             record_main_camera_frame_if_needed();
             if (third_viewer) {
                 third_viewer->frame();
@@ -3552,7 +3613,12 @@ int main(int argc, char** argv) {
             }
             last_viewer_frame_tick = std::chrono::steady_clock::now();
         }
-        viewer.frame();
+        render_main_viewer_frame(frames);
+#if !defined(_WIN32)
+        if (main_camera_view) {
+            main_camera_view->refresh();
+        }
+#endif
         record_main_camera_frame_if_needed();
         if (third_viewer) {
             third_viewer->frame();
@@ -3746,6 +3812,4 @@ int main(int argc, char** argv) {
     std::cout << "[gui] exit(normal)" << std::endl;
     return 0;
 }
-
-
 

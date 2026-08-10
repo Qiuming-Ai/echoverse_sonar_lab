@@ -2,6 +2,7 @@
 #include "SonarOutputUtil.hpp"
 
 #include "PointCloudViewerWindow.hpp"
+#include "PerformanceProfiler.hpp"
 #include "RockSonarPlotView.hpp"
 #include "SonarControlPanel.hpp"
 #include "ui/DockWorkspace.hpp"
@@ -25,6 +26,7 @@
 #include <osg/ref_ptr>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -352,6 +354,7 @@ bool FlsModule::tick(const Eigen::Affine3d& pose,
     if (!sonar) {
         return false;
     }
+    const auto performance_start = std::chrono::steady_clock::now();
     const double depth_m = std::max(0.0, -pose.translation().z());
     sonar->setRange(runtime_range_m);
     sonar->setGain(runtime_gain);
@@ -380,6 +383,19 @@ bool FlsModule::tick(const Eigen::Affine3d& pose,
     if (out_sample) {
         *out_sample = sample;
     }
+    standalone_mvp::PerformanceSample performance;
+    performance.component = "fls_realtime_ping";
+    performance.module = module_cfg.name.toStdString();
+    performance.frame_index = frame_index;
+    performance.duration_ms = std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - performance_start)
+                                  .count();
+    performance.output_points = sample.bins.size();
+    performance.output_bytes = sample.bins.size() * sizeof(float);
+    performance.beam_count = sample.beam_count;
+    performance.bin_count = sample.bin_count;
+    performance.range_m = runtime_range_m;
+    standalone_mvp::PerformanceProfiler::instance().record(performance);
     return true;
 }
 
@@ -515,6 +531,7 @@ void FlsModule::tickPointCloud(const Eigen::Affine3d& pose) {
     if (!point_cloud_runtime_enabled || !point_cloud_sim || !point_cloud_cfg_runtime.enabled) {
         return;
     }
+    const auto performance_start = std::chrono::steady_clock::now();
     point_cloud_cfg_runtime.range_m = std::clamp(static_cast<double>(runtime_range_m), 0.1, 100.0);
     point_cloud_cfg_runtime.depth_m = std::max(0.0, -pose.translation().z());
     point_cloud_cfg_runtime.temperature_c = env_cfg.temperature_c;
@@ -533,4 +550,20 @@ void FlsModule::tickPointCloud(const Eigen::Affine3d& pose) {
     point_cloud_tcp_streamer.sendFrame(frame);
     const standalone_mvp::PointCloudTcpRuntimeStatus st = point_cloud_tcp_streamer.status();
     point_cloud_window->setTcpRuntimeStatus(st.running, st.client_connected, st.last_sent_seq, st.last_payload_bytes);
+    standalone_mvp::PerformanceSample performance;
+    performance.component = "fls_point_cloud";
+    performance.module = module_cfg.name.toStdString();
+    performance.duration_ms = std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - performance_start)
+                                  .count();
+    performance.input_points = frame.sampling.requested_point_count;
+    performance.output_points = frame.sampling.recovered_point_count;
+    performance.output_bytes = frame.polar_frame.range_image_m.size() * sizeof(float) +
+                               frame.polar_frame.intensity_image.size() * sizeof(float) +
+                               frame.points_world.size() * sizeof(osg::Vec3f) +
+                               frame.point_intensities.size() * sizeof(float);
+    performance.width = frame.polar_frame.width;
+    performance.height = frame.polar_frame.height;
+    performance.range_m = point_cloud_cfg_runtime.range_m;
+    standalone_mvp::PerformanceProfiler::instance().record(performance);
 }

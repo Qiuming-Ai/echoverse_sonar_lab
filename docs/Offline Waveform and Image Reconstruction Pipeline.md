@@ -6,6 +6,12 @@ Based on the existing MATLAB code in `src/matlab_point2file2image`, this documen
 2. generates an `hdf5` waveform file,
 3. reconstructs a sonar image that includes Doppler and noise effects.
 
+Responsibility boundary: the input ESL3D file was produced by the C++ runtime and
+contains polar range/intensity data from which an echo point cloud can be recovered.
+It is not a raw receive-waveform file. MATLAB performs the subsequent channel echo
+synthesis and signal-processing stages that generate the final waveform-domain echo
+and reconstructed image.
+
 ---
 
 ## 1. End-to-End Flow (Two Stages)
@@ -96,7 +102,10 @@ In `pointcloud2file.m`, each frame also performs:
 `EchoInit.m` outputs `echo.y_deci` (downsampled complex baseband channel signal). Key steps:
 
 1. **Scattered echo synthesis**  
-   Calls `sim_rx_from_scatterers_perTX_cuda(...)` (when NVIDIA GPU is available) or `sim_rx_from_scatterers_perTX(...)` (non-CUDA path; this `.m` file is not visible in the current repo, which usually implies external dependency or implementation elsewhere).
+   Calls `sim_rx_from_scatterers_perTX_cuda(...)` when a supported NVIDIA GPU is
+   detected, or the repository's `sim_rx_from_scatterers_perTX.m` CPU implementation
+   otherwise. The CUDA wrapper requires a compiled MEX binary and does not execute the
+   `.cu` source directly.
 
 2. **Propagation-delay zero padding**  
    Computes `delay_samples` using `t` and pads zeros at the front.
@@ -125,7 +134,32 @@ In `pointcloud2file.m`, each frame also performs:
 8. **FIR low-pass + decimation**  
    Runs `SignalFilter.process`, then decimates by `decimation_factor` to produce `y_deci`.
 
-### 3.2 HDF5 Writer (`SonarDataMaker`)
+### 3.2 Compile and Verify the Optional CUDA MEX Backend
+
+From MATLAB, change to the CUDA source directory and compile:
+
+```matlab
+cd("src/matlab_point2file2image/RXSignalGen");
+mexcuda -setup C++;
+mexcuda -R2018a NVCCFLAGS='-allow-unsupported-compiler' ...
+    sim_rx_from_scatterers_perTX_cuda_mex.cu;
+```
+
+Before running the pipeline, verify:
+
+```matlab
+gpuDevice
+which sim_rx_from_scatterers_perTX_cuda_mex
+exist('sim_rx_from_scatterers_perTX_cuda_mex', 'file')  % expected MEX result: 3
+```
+
+The NVIDIA CUDA Toolkit, MATLAB-supported CUDA version, and a compatible host C++
+compiler must be installed. If MATLAB detects an NVIDIA GPU but the MEX binary is not
+available, the CUDA wrapper reports an error with the compilation command. The CPU
+path remains available by running on a system without the CUDA selection condition or
+by explicitly disabling it in `EchoInit.m` for a controlled experiment.
+
+### 3.3 HDF5 Writer (`SonarDataMaker`)
 
 `DataMakerInit.m` creates HDF5 through `SonarDataMaker` and writes two categories:
 
@@ -138,7 +172,7 @@ Filename policy:
 - Filename is `<esl3d_filename>.h5`.
 - If `Sonar.json:file_opt_params.output_path` is non-empty, output there instead.
 
-### 3.3 Internal HDF5 Organization
+### 3.4 Internal HDF5 Organization
 
 `SonarDataMaker.writeNumericDatasetWithComplexSupport` stores complex values via `real/imag` sub-datasets:
 
@@ -198,7 +232,22 @@ Then `file2image` applies matched filtering, TVG, and beamforming to these chann
 
 ---
 
-## 6. Minimal Running Example
+## 6. Performance Logging
+
+Set an output path before calling `pointcloud2file`:
+
+```matlab
+setenv('ESL_MATLAB_PERF_CSV', fullfile(pwd, 'results', 'matlab_performance.csv'));
+pointcloud2file("./SonarParameter/Sonar.json");
+```
+
+The CSV contains one row per ping with ESL3D read time, decimation time, echo-synthesis
+time, HDF5-write time, total time, input/retained scatterer counts, waveform dimensions,
+and the selected `cpu_matlab` or `cuda_mex` backend. Clear the variable to disable
+profiling. Keep CPU and CUDA measurements in separate runs and report the exact GPU,
+CUDA, MATLAB, and MEX build environment.
+
+## 7. Minimal Running Example
 
 ```matlab
 % 1) Generate h5 from esl3d (echoes include Doppler + noise)
@@ -217,7 +266,7 @@ Recommended minimum configuration in `Sonar.json`:
 
 ---
 
-## 7. One-Sentence Summary
+## 8. One-Sentence Summary
 
 This MATLAB offline pipeline is essentially:  
 **`ESL3D frame data -> geometric point cloud -> channel echo simulation (with Doppler + AWGN) -> HDF5 archival -> matched filtering / TVG / DAS -> sector sonar image`**.

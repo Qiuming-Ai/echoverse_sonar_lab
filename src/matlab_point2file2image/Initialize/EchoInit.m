@@ -48,4 +48,9 @@ echo.v = v;
 echo.v_calc = v_calc;
 echo.v_mix = v_mix;
 echo.y_fir = y_fir;
+if use_nvidia_cuda
+    echo.backend = "cuda_mex";
+else
+    echo.backend = "cpu_matlab";
+end
 end
