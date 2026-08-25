@@ -1,47 +1,24 @@
 #include "SonarOutputUtil.hpp"
+#include "offline_processing/OfflineProcessingPipeline.hpp"
 
 #include <QApplication>
-#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
-#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QProcess>
 #include <QProgressDialog>
 #include <QRegularExpression>
 
 #include <algorithm>
+#include <chrono>
+#include <future>
 #include <iostream>
+#include <mutex>
 
 namespace standalone_mvp {
 namespace {
-
-QString matlabRootPath() {
-    const QString rel = QStringLiteral("src/matlab_point2file2image");
-    const QString from_cwd = QDir::cleanPath(QDir::currentPath() + QStringLiteral("/") + rel);
-    if (QDir(from_cwd).exists()) {
-        return from_cwd;
-    }
-    return QDir::cleanPath(QCoreApplication::applicationDirPath() + QStringLiteral("/../") + rel);
-}
-
-QString quoteCommandPath(const QString& path) {
-    QString native = QDir::toNativeSeparators(path);
-    native.replace(QLatin1Char('"'), QStringLiteral("\\\""));
-    return QStringLiteral("\"%1\"").arg(native);
-}
-
-QString formatQuotedExeCommand(const QString& exe, const QStringList& args) {
-    QString cmd = QDir::toNativeSeparators(exe);
-    for (const QString& arg : args) {
-        cmd += QLatin1Char(' ');
-        cmd += quoteCommandPath(arg);
-    }
-    return cmd;
-}
 
 bool esl2dFileOutputEnabled(const SonarModuleConfig& mod) {
     switch (mod.type) {
@@ -247,79 +224,65 @@ bool runPointCloudPostProcess(const QString& esl3d_path,
         !QFile::exists(sonar_json_path)) {
         return false;
     }
-    const QString kMatlabRootPath = matlabRootPath();
-    const QString kPointcloud2fileExe = QDir(kMatlabRootPath).filePath(QStringLiteral("pointcloud2file.exe"));
-    const QString kFile2imageExe = QDir(kMatlabRootPath).filePath(QStringLiteral("file2image.exe"));
-
-    QDir().mkpath(waveform_output_dir);
-
-    QJsonObject root;
-    QFile in_file(sonar_json_path);
-    if (in_file.open(QIODevice::ReadOnly)) {
-        const QJsonDocument doc = QJsonDocument::fromJson(in_file.readAll());
-        if (doc.isObject()) {
-            root = doc.object();
-        }
-    }
-    in_file.close();
-
-    QJsonObject file_opt_params = root.value(QStringLiteral("file_opt_params")).toObject();
-    file_opt_params[QStringLiteral("esl3d_path")] = QDir::fromNativeSeparators(esl3d_path);
-    file_opt_params[QStringLiteral("output_path")] = QDir::fromNativeSeparators(waveform_output_dir);
-    root[QStringLiteral("file_opt_params")] = file_opt_params;
-
-    QFile out_file(sonar_json_path);
-    if (out_file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        const QJsonDocument doc(root);
-        out_file.write(doc.toJson(QJsonDocument::Indented));
-        out_file.close();
+    if (!QDir().mkpath(waveform_output_dir)) {
+        std::cerr << "[output] cannot create waveform output directory: "
+                  << waveform_output_dir.toStdString() << std::endl;
+        return false;
     }
 
-    QProgressDialog waiting(QStringLiteral("Generating sonar data, please wait..."), QString(), 0, 0);
+    sonar::offline::ProcessingOptions options;
+    options.esl3d_path = QDir::toNativeSeparators(esl3d_path).toStdString();
+    options.sonar_config_path = QDir::toNativeSeparators(sonar_json_path).toStdString();
+    options.output_directory = QDir::toNativeSeparators(waveform_output_dir).toStdString();
+
+    QProgressDialog waiting(QStringLiteral("Preparing native sonar processing..."),
+                            QString(), 0, 0);
     waiting.setWindowTitle(QStringLiteral("Sonar Processing"));
     waiting.setCancelButton(nullptr);
     waiting.setMinimumDuration(0);
     waiting.setWindowModality(Qt::ApplicationModal);
     waiting.show();
-    QApplication::processEvents();
 
-    QProcess p2f_process;
-    const QString sonar_json_arg = QDir::fromNativeSeparators(sonar_json_path);
-    const QString p2f_cmd = formatQuotedExeCommand(kPointcloud2fileExe, {sonar_json_arg});
-    std::cout << "[output][cmd] " << p2f_cmd.toStdString() << std::endl;
-    p2f_process.setWorkingDirectory(QDir::fromNativeSeparators(kMatlabRootPath));
-    p2f_process.startCommand(p2f_cmd);
-    while (!p2f_process.waitForFinished(100)) {
+    std::mutex progress_mutex;
+    sonar::offline::ProcessingProgress latest_progress;
+    auto worker = std::async(std::launch::async, [&]() {
+        return sonar::offline::process_esl3d_to_images(
+            options, [&](const sonar::offline::ProcessingProgress& update) {
+                std::lock_guard<std::mutex> lock(progress_mutex);
+                latest_progress = update;
+            });
+    });
+
+    using namespace std::chrono_literals;
+    while (worker.wait_for(75ms) != std::future_status::ready) {
+        sonar::offline::ProcessingProgress snapshot;
+        {
+            std::lock_guard<std::mutex> lock(progress_mutex);
+            snapshot = latest_progress;
+        }
+        waiting.setLabelText(QString::fromStdString(snapshot.message));
+        if (snapshot.total_steps > 0) {
+            waiting.setRange(0, snapshot.total_steps);
+            waiting.setValue(snapshot.completed_steps);
+        } else {
+            waiting.setRange(0, 0);
+        }
         QApplication::processEvents();
     }
-    waiting.close();
 
-    const QString h5_path = QDir(waveform_output_dir).filePath(
-        QStringLiteral("%1.h5").arg(QFileInfo(esl3d_path).completeBaseName()));
-    if (!QFile::exists(h5_path)) {
-        std::cerr << "[output] pointcloud2file did not produce h5 at " << h5_path.toStdString() << std::endl;
+    try {
+        const sonar::offline::ProcessingResult result = worker.get();
+        waiting.close();
+        std::cout << "[output] native offline processing wrote " << result.hdf5_path
+                  << " and " << result.image_paths.size() << " image(s)" << std::endl;
+        return QFile::exists(QString::fromStdString(result.hdf5_path)) &&
+               result.image_paths.size() == static_cast<size_t>(result.frame_count);
+    } catch (const std::exception& error) {
+        waiting.close();
+        std::cerr << "[output] native offline processing failed: " << error.what()
+                  << std::endl;
         return false;
     }
-
-    QProgressDialog waiting_image(QStringLiteral("Generating sonar image, please wait..."), QString(), 0, 0);
-    waiting_image.setWindowTitle(QStringLiteral("Sonar Processing"));
-    waiting_image.setCancelButton(nullptr);
-    waiting_image.setMinimumDuration(0);
-    waiting_image.setWindowModality(Qt::ApplicationModal);
-    waiting_image.show();
-    QApplication::processEvents();
-
-    QProcess f2i_process;
-    const QString h5_arg = QDir::fromNativeSeparators(h5_path);
-    const QString f2i_cmd = formatQuotedExeCommand(kFile2imageExe, {h5_arg});
-    std::cout << "[output][cmd] " << f2i_cmd.toStdString() << std::endl;
-    f2i_process.setWorkingDirectory(QDir::fromNativeSeparators(kMatlabRootPath));
-    f2i_process.startCommand(f2i_cmd);
-    while (!f2i_process.waitForFinished(100)) {
-        QApplication::processEvents();
-    }
-    waiting_image.close();
-    return f2i_process.exitCode() == 0;
 }
 
 bool moduleWantsOutput(const SonarModuleConfig& mod) {

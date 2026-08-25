@@ -1,141 +1,129 @@
-# Sonar H5 Data Specification (Based on `DataMakerInit.m`)
+# Sonar H5 Data Specification
 
-## 1. Purpose
+## 1. Purpose and Implementation
 
-This document describes how sonar `.h5` output is initialized in the current pipeline, based on `src/matlab_point2file2image/Initialize/DataMakerInit.m`.
+The native offline pipeline writes sonar waveform files through
+`src/offline_processing/core/io/hdf5_writer.cpp`. The layout remains compatible with
+the original MATLAB `DataMakerInit.m` / `SonarDataMaker` format so existing readers
+can consume newly generated files. Native C++ generation and reconstruction complete
+the product workflow without MATLAB; the retained MATLAB readers and analysis scripts
+are optional research post-analysis tools for parameter studies, reproducibility
+checks, alternative plots, and native/MATLAB result comparison.
 
-`DataMakerInit` does not directly write signal matrices itself; it builds `sonarInfo`, resolves output path, and calls:
+`OfflineProcessingPipeline` builds `SonarAttributes` and calls:
 
-- `dataMaker = SonarDataMaker();`
-- `dataMaker.start(sonar_h5_filename, sonarInfo);`
+1. `Hdf5Writer::start(hdf5_path, attributes)`;
+2. `Hdf5Writer::write(waveform)` once per ping;
+3. `Hdf5Writer::close()` to finalize `ping_num`.
 
-So this spec focuses on:
+## 2. Required Inputs and Naming
 
-1. Required input fields in `sonar`
-2. Path and naming rules for `.h5`
-3. Metadata contract (`sonarInfo`) passed to `SonarDataMaker`
+The native entry point requires an existing ESL3D file, an existing sonar JSON file,
+a non-empty writable output directory, and at least one ESL3D frame. The JSON loader
+derives the excitation, matched filter, array geometry, and HDF5 attributes.
 
-## 2. Required Input Fields
-
-`DataMakerInit` hard-fails if any of the following fields is missing:
-
-- `sonar.tx_type`
-- `sonar.decimation_factor`
-- `sonar.MF`
-- `sonar.esl3d_path` (must be non-empty)
-
-Validation behavior:
-
-- Missing field => throws `DataMakerInit:MissingVar` with guidance to run `SonarInit` first.
-
-## 3. Output H5 File Naming and Directory
-
-The output filename is derived from `esl3d_path`:
-
-1. Extract `esl3d_dir` and `esl3d_name` from `sonar.esl3d_path`
-2. Resolve output directory:
-   - if `sonar.output_path` exists and is non-empty: use it
-   - otherwise: use `esl3d_dir`
-3. Final path:
-   - `<output_dir>/<esl3d_name>.h5`
+The output filename is `<esl3d-stem>.h5` inside
+`ProcessingOptions::output_directory`. The GUI supplies the module's `Waveform Data`
+directory. JSON `file_opt_params.esl3d_path` and `output_path` are overridden only in
+memory; the configuration file is never rewritten.
 
 Example:
 
-- input `esl3d_path = D:/proj/Point Cloud/run_01.esl3d`
-- no `output_path`
-- output H5 = `D:/proj/Point Cloud/run_01.h5`
+```text
+input:  D:/proj/Sonar Data/20260825_120000/FLS 1/3d.esl3d
+output: D:/proj/Sonar Data/20260825_120000/FLS 1/Waveform Data/3d.h5
+```
+
+Starting a writer uses HDF5 truncate semantics, so an existing file at the same output
+path is replaced.
+
+## 3. Root Layout
+
+```text
+/raw_data
+  /.attributes
+  /ping_1
+    /real
+    /imag
+  /ping_2
+    /real
+    /imag
+  ...
+```
+
+Complex values are represented by `real` and `imag` sub-datasets and a `complex=1`
+attribute on their parent. Real values use one dataset and `complex=0`. Matrices are
+column-major in memory; HDF5 dimensions are reversed to preserve MATLAB shape
+semantics without transposing the payload.
 
 ## 4. Transmission Mode Mapping
 
-`sonar.tx_type` controls array type metadata:
+`tx_signal_params.tx_type` controls `array_type`:
 
-- `cdm` -> `array_type = "CDM"`
-- `fdm` -> `array_type = "FDM"`
-- otherwise -> `array_type = "Baseline"`
+- `cdm` → `CDM`;
+- `fdm` → `FDM`;
+- all other supported modes → `Baseline`.
 
-Internal naming prefix (`CDMData` / `FDMData` / `BaselineData`) is selected in code but currently not used for final filename in this function.
+LFM, CDM, and FDM excitation and matched-filter generation are implemented natively.
 
 ## 5. Receive Window Policy
 
-If `sonar.array_window` exists:
+`rx_signal_params.array_window` selects the receive-element window:
 
-- string/scalar string values:
-  - `"hamming"` -> `hamming(sonar.Nrx)`
-  - `"hann"` -> `hann(sonar.Nrx)`
-  - `"blackman"` -> `blackman(sonar.Nrx)`
-  - otherwise -> `ones(sonar.Nrx, 1)`
-- non-string value:
-  - used directly as custom window
-  - `signal_win = "custom"`
+- `hamming` → Hamming window;
+- `hann` → Hann window;
+- `blackman` → Blackman window;
+- unknown names → all ones.
 
-If `sonar.array_window` is absent:
+The default is Hamming. The generated window is stored in `receive_array_win`.
 
-- default window is `hamming(sonar.Nrx)`
-- `signal_win = "hamming"`
+## 6. Sector, Frequency, and Bandwidth Rules
 
-## 6. Sector and Scan-Angle Policy
+The JSON loader derives one scan-angle vector per requested sector from
+`angle_segments_deg` plus `angle_step_deg`, or reads `angles_div_deg` directly.
+`scan_angle` is the concatenation of all sectors. `sector_div` contains the first
+sector start followed by every sector end.
 
-- `sector_div`:
-  - only created when `sonar.angles_div` is a non-empty cell array
-  - generated from first element start + each sector end
-- `sector_num`:
-  - uses `sonar.sector_num` if present
-  - default = `1`
-- `scan_angle`:
-  - uses `sonar.scan_angles` if present
-  - default = `-60:1:60`
+Center frequency uses the per-sector `Subfc` vector when it has multiple values;
+otherwise it uses `array_params.fc`. Bandwidth follows the same rule with `SubBW` and
+`array_params.BW`.
 
-## 7. Frequency/Bandwidth Selection Rule
+## 7. Metadata Contract
 
-Center frequency:
+The following values are stored under `/raw_data/.attributes` as scalar attributes or
+datasets as appropriate:
 
-- use `sonar.Subfc` if present and `numel(Subfc) > 1`
-- else use `sonar.fc` if present
-- else empty
+- `array_type`;
+- `signal_type` (`Baseband`);
+- `signal_win`;
+- `bandwidth`;
+- `sampling_frequency`;
+- `center_frequency`;
+- `decimate_factor`;
+- `sector_num`;
+- `match_filter_data`;
+- `receive_array_num`;
+- `receive_array_position`;
+- `receive_array_win`;
+- `pulse_duration`;
+- `sound_velocity`;
+- `velocity`;
+- `snr_level`;
+- `timestamp` (`yyyyMMdd_HHmmss`);
+- `scan_angle`;
+- `sector_div` when available;
+- `sample_delay`;
+- `ping_num`, written on close.
 
-Bandwidth:
+## 8. Ping Data
 
-- use `sonar.SubBW` if present and `numel(SubBW) > 1`
-- else use `sonar.BW` if present
-- else empty
+Each `/raw_data/ping_N` entry is a complex baseband matrix with shape
+`samples × receive_channels`. Values already contain the configured propagation,
+Doppler, AWGN, downconversion, FIR, and decimation effects. Image reconstruction reads
+the same data model, then applies matched filtering, TVG, and beamforming.
 
-## 8. `sonarInfo` Metadata Contract
+## 9. Verification
 
-The following fields are populated and passed into `SonarDataMaker.start(...)`:
-
-- `array_type`
-- `signal_type` = `"Baseband"`
-- `signal_win`
-- `bandwidth`
-- `sampling_frequency` <- `sonar.fs`
-- `center_frequency`
-- `decimate_factor` <- `sonar.decimation_factor`
-- `sector_num`
-- `match_filter_data` <- `sonar.MF_deci`
-- `receive_array_num` <- `sonar.Nrx`
-- `receive_array_position` <- `sonar.rx_xyz`
-- `receive_array_win`
-- `pulse_duration` <- `sonar.pulse_len`
-- `sound_velocity` <- `sonar.c0`
-- `velocity` <- `sonar.velocity`
-- `snr_level` <- `sonar.snr_level`
-- `timestamp` <- runtime string `yyyymmdd_HHMMSS`
-- `scan_angle`
-- optional `sector_div` (when available)
-- optional `sample_delay` <- `sonar.compensate_range` (when available)
-
-## 9. Relationship to ESL3D
-
-`DataMakerInit` uses `.esl3d` primarily as:
-
-1. an identity anchor for output naming (`<esl3d_name>.h5`)
-2. a default output directory source (`<esl3d_dir>`)
-
-It does not parse `.esl3d` content in this function.
-
-## 10. Practical Integration Notes
-
-- Ensure `SonarInit` is executed before `DataMakerInit`, otherwise required fields may be missing.
-- If your workflow requires deterministic output location, always set `sonar.output_path`.
-- If downstream processing depends on sector boundaries, provide valid `angles_div`.
-- If you use custom receive windows, verify size equals `Nrx`.
+`offline_hdf5_test` writes a synthetic ping, reads it through
+`core/io/hdf5_reader.cpp`, and verifies dimensions, complex values, and attributes.
+The reader also supports MATLAB-produced files that follow the same contract.

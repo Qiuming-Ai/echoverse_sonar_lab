@@ -412,11 +412,12 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     environment_form->addRow("", enable_beam_axis_smoothing_);
 
     generate_raw_waveform_ = new QCheckBox(
-        QStringLiteral("Generate raw waveform (pointcloud2file + file2image)"), output_tab);
+        QStringLiteral("Generate raw waveform and reconstructed images"), output_tab);
     generate_raw_waveform_->setChecked(false);
     generate_raw_waveform_->setToolTip(
-        QStringLiteral("When enabled, after 3D ESL3D file recording stops, run MATLAB conversion to produce "
-                       "raw waveform HDF5 and images. Requires 3D point cloud file output enabled per sonar."));
+        QStringLiteral("After ESL3D recording stops, run the built-in C++ signal-processing pipeline to "
+                       "produce raw-waveform HDF5 and reconstructed PNG images. No MATLAB runtime or "
+                       "external converter executable is required. 3D point-cloud file output must be enabled."));
 
     file_output_table_ = new QTableWidget(0, 3, output_tab);
     file_output_table_->setHorizontalHeaderLabels(

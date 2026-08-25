@@ -236,10 +236,10 @@ When output session stops:
 2. Session summary is written to:  
    `Sonar Data/<timestamp>/recording_summary.json`
 3. TCP listeners are shut down.
-4. For FLS/MBES modules with ESL3D file output enabled, the recorded range/intensity
-   point-cloud representation may be passed to the MATLAB offline post-process, which
-   performs channel echo synthesis and final signal-level image reconstruction. It may
-   write artifacts under:
+4. For FLS/MBES modules with ESL3D file output and waveform generation enabled, the
+   recorded range/intensity representation is passed to the embedded native offline
+   library. It performs channel echo synthesis and final signal-level reconstruction
+   without starting an external converter, and writes artifacts under:
    `<module>/Waveform Data/`
 
 ### 9.4 Operator Checklist

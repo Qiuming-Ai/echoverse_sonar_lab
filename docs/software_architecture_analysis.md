@@ -1,18 +1,24 @@
 # EchoVerse Sonar Lab Software Architecture
 
-## 1. Scope
+## 1. Scope and Processing Boundary
 
-EchoVerse Sonar Lab is a two-runtime system. The online C++ application and the
-offline MATLAB pipeline use the same recorded sensor configuration and are connected
-by documented ESL3D and HDF5 formats, but they do not perform the same computation.
+EchoVerse Sonar Lab is a single C++ application with two connected processing paths:
 
-The central boundary is:
+- the online path renders the interactive scene, produces real-time intensity data,
+  streams packets, and records ESL2D/ESL3D;
+- the native offline path converts a completed ESL3D recording into receive-channel
+  waveforms, HDF5, and beamformed PNG images.
 
-- **C++ produces real-time echo/intensity images and geometric echo point clouds.**
-- **MATLAB converts the C++ point-cloud data into received channel waveforms and the final signal-processed sonar image.**
+An ESL3D frame is an intermediate range/intensity representation, not a raw receive
+waveform. The two paths share this documented boundary while remaining different
+computations.
 
-Consequently, an ESL3D frame is an intermediate range/intensity representation, not
-the final raw receive waveform.
+Together, the online and native offline paths form a self-contained product
+workflow; MATLAB is not required to record data, synthesize waveforms, write HDF5,
+or reconstruct images. The MATLAB code under `src/matlab_point2file2image/` is
+provided separately for research post-analysis, parameter studies, reproducibility
+checks, alternative visualization, and comparison with the native pipeline. It is
+not an execution fallback or deployment dependency.
 
 ## 2. End-to-End Architecture
 
@@ -20,120 +26,103 @@ the final raw receive waveform.
 flowchart LR
     A[Project and sensor configuration] --> B[Shared 3D scene]
     B --> C[C++ online runtime]
-    C --> D[Real-time FLS/MBES/SSS echo images]
+    C --> D[Real-time FLS/MBES/SSS images]
     C --> E[Polar range and intensity frames]
     E --> F[Echo point cloud]
     D --> G[ESL2D and TCP]
     E --> H[ESL3D and TCP]
-    H --> I[MATLAB ESL3D reader]
-    I --> J[Scatterer point set]
-    J --> K[CPU or CUDA MEX channel echo synthesis]
+    H --> I[Native ESL3D reader]
+    I --> J[Cartesian scatterers]
+    J --> K[CPU channel echo synthesis]
     K --> L[HDF5 waveform data]
-    L --> M[Matched filtering, TVG, and DAS beamforming]
-    M --> N[Final waveform-domain sonar image]
+    K --> M[Matched filter, TVG, DAS]
+    M --> N[Grayscale sector PNGs]
 ```
 
-## 3. C++ Online Runtime
+## 3. Online Runtime
 
 ### 3.1 Project, scene, and camera layer
 
 `AppConfig`, `SharedScene`, the scene editor, path controller, and camera modules load
-project configuration and maintain a shared scene graph. Sensor modules receive poses
-derived from their camera bindings.
+the project configuration and maintain a shared scene graph. Sensor modules receive
+poses derived from their camera bindings.
 
-On Windows, the OSG main view retains its native-window integration. On Linux, the
-main view uses `MainCameraView`: OSG renders to an offscreen texture and the result is
-copied into a Qt widget. This avoids X11 window re-parenting and supports both X11 and
-Wayland.
+On Windows, the OSG main view uses native-window integration. On Linux,
+`MainCameraView` renders OSG to an offscreen texture that is displayed in a Qt widget,
+which supports both X11 and Wayland.
 
 ### 3.2 Real-time echo-image layer
 
 `sonar_imaging` renders scene depth and return-intensity channels. `sonar_core`
-converts those intermediate channels into beam-by-bin intensity samples. `FlsModule`,
-`MbesModule`, and `SssModule` use this path for real-time visualization and ESL2D
-output.
+converts them into beam-by-bin intensity samples. `FlsModule`, `MbesModule`, and
+`SssModule` use this path for real-time visualization and ESL2D output.
 
-These samples are processed intensity-domain data. They should not be described as
-multi-channel raw receive waveforms.
+These are processed intensity-domain samples, not multi-channel raw waveforms.
 
-### 3.3 Echo-point-cloud layer
+### 3.3 Point-cloud and session layers
 
 `PointCloudSonarSimulation` produces polar range/intensity arrays and reconstructs
-valid samples as 3D points. FLS and MBES modules can display, stream, or record this
-representation. ESL3D stores the metadata, range image, and intensity image required
-to reconstruct the point cloud offline.
-
-### 3.4 Data and session layer
-
+valid samples as 3D points. FLS and MBES can display, stream, or record this data.
 `OutputController`, `Esl2dFileWriter`, `PointCloudTcpStreamer`, and `SonarTcpHub`
-manage session directories, file recording, and network output. Packet definitions
-are documented separately so that external consumers can parse them without linking
-the GUI application.
+manage session directories, recording, and network output.
 
-## 4. MATLAB Offline Runtime
+## 4. Native Offline Processing Library
 
-The MATLAB path begins only after an ESL3D file has been generated by C++:
+`src/offline_processing/` is a static library linked to the GUI target. Its main API,
+`process_esl3d_to_images`, performs:
 
-1. `SceneInit` and `esl3d` parse metadata, range, and intensity frames.
-2. `getPointCloud` maps each valid polar sample to a Cartesian scatterer point.
-3. `PointCloudDecimate` optionally reduces the scatterer count.
-4. `EchoInit` calls either `sim_rx_from_scatterers_perTX` or the compiled
-   `sim_rx_from_scatterers_perTX_cuda_mex` backend to synthesize received channels.
-5. Doppler-like resampling, AWGN, down-conversion, filtering, and decimation produce
-   complex baseband waveforms.
-6. `SonarDataMaker` stores waveform data in HDF5.
-7. `file2image` applies matched filtering, TVG, delay-and-sum beamforming, and sector
-   mapping to form the final offline image.
+1. sonar JSON parsing and LFM/CDM/FDM excitation generation;
+2. ESL3D range/intensity decoding and Cartesian point recovery;
+3. CPU receive-channel echo synthesis;
+4. Doppler resampling, AWGN, baseband mixing, FIR filtering, and decimation;
+5. MATLAB-compatible HDF5 serialization;
+6. matched filtering, TVG, delay-and-sum beamforming, sector mapping, and PNG output.
 
-The CUDA source file is not loaded directly by MATLAB. It must first be compiled with
-`mexcuda`; see the offline-pipeline document for the exact command.
+`SonarOutputUtil` launches this function with `std::async` and forwards thread-safe
+progress snapshots to Qt. The configuration file is read-only: session paths are
+passed as in-memory overrides. The library contains a disabled CUDA-backend shim so
+the port cannot fall through to the source project's standalone `echo_cuda.exe` path.
+No converter or accelerator child process is created.
 
 ## 5. Responsibility and Output Matrix
 
-| Function | C++ | MATLAB |
+| Function | Online C++ path | Native offline C++ path |
 |---|---:|---:|
-| Interactive 3D scene and vehicle/sensor pose | Yes | No |
+| Interactive scene and sensor pose | Yes | Reads recorded metadata |
 | Real-time echo/intensity image | Yes | No |
-| Polar range/intensity frame | Yes | Reads |
-| Echo point-cloud reconstruction | Yes | Reconstructs from ESL3D for signal synthesis |
-| TCP streaming and packet recording | Yes | Reads recorded data |
-| Multi-channel receive-waveform synthesis | No | Yes |
-| Doppler/noise signal processing | No in the offline waveform path | Yes |
+| Polar range/intensity frame | Produces | Reads from ESL3D |
+| Cartesian echo point cloud | Produces/displays | Reconstructs for signal synthesis |
+| TCP streaming and packet recording | Yes | No |
+| Multi-channel receive waveform | No | Yes |
+| Doppler/noise signal processing | No in waveform domain | Yes |
 | HDF5 waveform export | No | Yes |
-| Matched filtering, TVG, DAS image reconstruction | No in the offline waveform path | Yes |
+| Matched-filter/TVG/DAS reconstruction | No in waveform domain | Yes |
 
 ## 6. Concurrency and HPC Boundary
 
-Multiple sonar modules share one scene and are independently configurable, but this
-does not mean the current release provides distributed or HPC execution. The GUI
-viewer is intentionally single-threaded for rendering stability. The MATLAB
-`pointcloud2file` loop processes frames sequentially, although an individual echo
-synthesis call can use the optional CUDA MEX backend.
+The GUI viewer is intentionally single-threaded for rendering stability. Offline
+processing runs on one background task so the UI can remain responsive. Frames are
+processed sequentially, while receive channels and selected DSP loops use OpenMP when
+available.
 
-The current release has no native MPI, Slurm, Kubernetes, or cluster-job interface.
-Independent scenes, paths, or recordings may be distributed as separate processes by
-an external scheduler if each job uses isolated output paths, but this is an
-experiment-orchestration strategy rather than a built-in capability.
+The current release has no MPI, Slurm, Kubernetes, or distributed job interface.
+Independent recordings can be scheduled as isolated external jobs, but that is an
+experiment-orchestration strategy rather than a built-in cluster capability.
 
 ## 7. Performance Observability
 
-The opt-in profiler records:
+The online profiler records scene inventory, rendering time, sonar ping time,
+point-count metrics, and output estimates through `ESL_CPP_PERF_CSV`. The offline
+pipeline records per-frame read, filtering/capping, echo-synthesis, HDF5-write, total
+time, dimensions, and CPU backend through `ESL_OFFLINE_PERF_CSV`.
 
-- scene node, drawable, vertex, and estimated triangle counts;
-- main-view rendering time;
-- FLS, MBES, and SSS real-time ping time;
-- point-cloud requested/recovered sample counts and output size estimates;
-- MATLAB per-frame ESL3D read, decimation, echo-synthesis, and HDF5-write time;
-- CPU or CUDA MEX backend selection.
-
-See `performance_and_scalability.md` for environment variables, CSV fields, and the
-recommended small/medium/large experiment matrix.
+See [`performance_and_scalability.md`](performance_and_scalability.md) for the exact
+variables, fields, and experiment rules.
 
 ## 8. Architecture Summary
 
-EchoVerse Sonar Lab connects a responsive C++ geometry/intensity simulator with a
-MATLAB waveform-synthesis and image-reconstruction pipeline. The ESL3D boundary is
-the key reproducibility contract: it transfers C++-generated point-cloud information
-to MATLAB without claiming that the C++ stage has already produced the final raw
-echo waveform.
-
+EchoVerse Sonar Lab connects an interactive geometry/intensity simulator to an
+embedded waveform-synthesis and image-reconstruction library. ESL3D is the stable
+reproducibility contract between those stages; HDF5 and PNG are the offline outputs.
+The native paths complete the product workflow, while the retained MATLAB sources
+provide an optional research-analysis environment around the same data contract.

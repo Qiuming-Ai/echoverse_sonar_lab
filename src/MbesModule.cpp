@@ -16,7 +16,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProgressDialog>
-#include <QProcess>
 #include <QRegularExpression>
 
 #include <sonar_types_v2/echoverse_math_types.hpp>

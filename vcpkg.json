@@ -2,6 +2,8 @@
   "name": "echoverse-sonar-lab",
   "version-string": "0",
   "dependencies": [
+    "hdf5",
+    "nlohmann-json",
     "qtbase",
     "opencv4",
     {

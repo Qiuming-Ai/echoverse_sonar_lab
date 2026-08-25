@@ -155,7 +155,7 @@ struct SideScanSonarConfigUi {
 };
 
 struct OutputFileConfig {
-    /// When true, run pointcloud2file + file2image after ESL3D recording (MATLAB pipeline).
+    /// When true, run the native waveform/image pipeline after ESL3D recording.
     bool generate_raw_waveform = false;
 };
 

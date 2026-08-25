@@ -7,16 +7,17 @@ shared 3D scene.
 
 ## What Each Runtime Does
 
-The software uses two connected, but technically distinct, execution paths:
+The software uses two connected execution paths inside the same C++ process:
 
 | Runtime | Responsibility | Main outputs |
 |---|---|---|
 | C++ online runtime | Loads the scene, renders real-time sonar echo/intensity images, recovers echo point clouds, displays the GUI, streams data, and records packetized frames | Real-time FLS/MBES/SSS images, `.esl2d`, `.esl3d`, TCP streams |
-| MATLAB offline runtime | Reads C++-generated `.esl3d` point-cloud frames, synthesizes received channel echoes, applies signal processing, and reconstructs the final waveform-domain sonar image | HDF5 channel waveforms, processed echo data, reconstructed sector images/GIFs |
+| Native C++ offline pipeline | Reads recorded `.esl3d` frames, synthesizes multi-channel echoes, applies matched filtering/TVG/beamforming, and reconstructs waveform-domain images | HDF5 channel waveforms and one grayscale PNG per ping |
 
-The C++ output is therefore the geometric/intensity-domain input to the MATLAB
-signal-level pipeline. The C++ runtime does not generate the final multi-channel raw
-waveform used by the MATLAB beamforming path.
+The online output is the geometric/intensity-domain input to the native signal-level
+pipeline. When enabled, processing starts after ESL3D recording stops. It calls the
+embedded library directly; it does not launch converter executables, require MATLAB,
+or modify the selected sonar JSON file.
 
 ## Features
 
@@ -24,14 +25,15 @@ waveform used by the MATLAB beamforming path.
 - Real-time C++ echo/intensity image generation
 - C++ polar range/intensity frame and point-cloud recovery
 - Session-scoped `.esl2d` / `.esl3d` recording and TCP streaming
-- MATLAB echo synthesis, Doppler/noise processing, HDF5 export, and image reconstruction
-- Optional NVIDIA CUDA MEX acceleration for MATLAB echo synthesis
-- Opt-in C++ and MATLAB performance CSV logging for scale experiments
+- Native C++ echo synthesis, Doppler/noise processing, HDF5 export, and PNG reconstruction
+- Background offline processing with GUI progress reporting
+- Opt-in C++ performance logging for scale experiments
 - Windows and Linux GUI support; Linux uses an offscreen main-camera path compatible with X11 and Wayland
 
 ## Repository Layout
 
-- `src/`: C++ runtime and MATLAB offline pipeline
+- `src/`: C++ runtime, native offline pipeline, and optional MATLAB research-analysis toolkit
+- `src/offline_processing/`: embedded ESL3D-to-HDF5/image processing library
 - `docs/`: architecture, formats, build, performance, and development documentation
 - `uwmodels/`: example underwater models and scenes
 - `CMakeLists.txt`: top-level CMake configuration
@@ -77,8 +79,7 @@ in Eigen 3.4. A different compatible Eigen 5 checkout can be supplied with
 - Qt Widgets and Network; Qt 6.9+ is recommended
 - OpenCV core, imgproc, imgcodecs, videoio, and highgui
 - OpenSceneGraph and OpenThreads 3.6.x
-- MATLAB for the offline waveform/image pipeline
-- NVIDIA CUDA Toolkit plus a supported host compiler only when CUDA MEX acceleration is required
+- HDF5 C library and nlohmann-json (installed automatically by the vcpkg manifest on Windows)
 
 ## Quick Start: Windows
 
@@ -95,6 +96,7 @@ cmake -S . -B build_vcpkg -G "Visual Studio 17 2022" -A x64 `
   -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
   -DVCPKG_TARGET_TRIPLET=x64-windows
 cmake --build build_vcpkg --config Release
+ctest --test-dir build_vcpkg -C Release --output-on-failure
 ```
 
 Start `build_vcpkg\Release\esl_launcher.exe`. The launcher supplies the required
@@ -113,6 +115,7 @@ git submodule update --init --recursive
 
 cmake -S . -B build_linux -DCMAKE_BUILD_TYPE=Release
 cmake --build build_linux --parallel 2
+ctest --test-dir build_linux --output-on-failure
 ./build_linux/esl_launcher
 ```
 
@@ -130,35 +133,29 @@ See [`docs/linux_build.md`](docs/linux_build.md) for dependency roles, verified
 distribution/version records, Qt/OpenCV compatibility checks, headless smoke tests,
 and troubleshooting.
 
-## MATLAB Offline Echo and Image Pipeline
+## Native Offline Echo and Image Pipeline
 
-The recommended order is:
+In **Settings → Output**:
 
-```matlab
-pointcloud2file("./SonarParameter/Sonar.json");  % ESL3D -> channel echoes -> HDF5
-file2image("./Sonar Data/default.h5");          % HDF5 -> processing -> sonar image
-```
+1. Enable ESL3D point-cloud file output for the FLS or MBES module.
+2. Enable **Generate raw waveform and reconstructed images**.
+3. Start and stop a recording session.
 
-CPU echo synthesis uses
-`src/matlab_point2file2image/RXSignalGen/sim_rx_from_scatterers_perTX.m`.
+After the ESL3D writer closes, the application runs the embedded pipeline on a
+background thread. It writes `<recording>.h5` and timestamped `pingNNN.png` files to
+the module's `Waveform Data` directory. The configuration under
+`src/offline_processing/config/` supplies the project template, but its
+`esl3d_path` and `output_path` values are overridden only in memory.
 
-### Compile the Optional CUDA MEX Backend
-
-Having an NVIDIA GPU is not sufficient by itself. Before enabling the GPU path,
-compile the CUDA source from MATLAB:
-
-```matlab
-cd("src/matlab_point2file2image/RXSignalGen");
-mexcuda -setup C++;
-mexcuda -R2018a NVCCFLAGS='-allow-unsupported-compiler' ...
-    sim_rx_from_scatterers_perTX_cuda_mex.cu;
-```
-
-Verify that `sim_rx_from_scatterers_perTX_cuda_mex` is discoverable on the MATLAB
-path before running `pointcloud2file`. `EchoInit.m` selects the CUDA MEX path when a
-supported NVIDIA GPU is detected; otherwise it uses the MATLAB CPU implementation.
-Detailed requirements and failure modes are documented in
-[`docs/Offline Waveform and Image Reconstruction Pipeline.md`](docs/Offline%20Waveform%20and%20Image%20Reconstruction%20Pipeline.md).
+The native implementation and templates live in `src/offline_processing/`. This
+makes the product workflow self-contained: recording, waveform synthesis, HDF5
+serialization, and image reconstruction complete in C++ without MATLAB. The MATLAB
+code under `src/matlab_point2file2image/` remains available as an additional research
+post-analysis toolkit for algorithm inspection, parameter studies, reproducibility
+checks, alternative plotting, and comparison with native results. It is not a
+runtime fallback, deployment dependency, or required product-workflow step. See
+[`docs/Offline Waveform and Image Reconstruction Pipeline.md`](docs/Offline%20Waveform%20and%20Image%20Reconstruction%20Pipeline.md)
+for the stage-by-stage data flow and configuration details.
 
 ## Performance and Scale Logging
 
@@ -170,23 +167,23 @@ ESL_PERF_RUN_LABEL=shipwreck_100_pings \
 ./build_linux/esl_launcher
 ```
 
-MATLAB profiling is also opt-in:
+Native offline profiling is also opt-in:
 
-```matlab
-setenv('ESL_MATLAB_PERF_CSV', fullfile(pwd, 'results', 'matlab_performance.csv'));
-pointcloud2file("./SonarParameter/Sonar.json");
+```powershell
+$env:ESL_OFFLINE_PERF_CSV = "results/offline_performance.csv"
+& .\build_vcpkg\Release\esl_launcher.exe
 ```
 
 The logs contain per-frame/per-ping execution time, scene inventory, beam/bin size,
-point counts, output byte estimates, waveform dimensions, and CPU/CUDA backend labels.
+point counts, output byte estimates, waveform dimensions, and CPU backend labels.
 See [`docs/performance_and_scalability.md`](docs/performance_and_scalability.md) for
 the complete experiment protocol and current scalability limitations.
 
 A three-repeat Windows characterization was completed for the prepared
 pipeline-inspection and coral projects. The tested scenes contained 52,096 and
 591,116 estimated loaded triangles, respectively, and both sustained the configured
-5 fps GUI-loop cap. These measurements cover the C++ runtime with file/TCP output
-disabled; they are not MATLAB, CUDA, uncapped-throughput, or universal scene-limit
+5 fps GUI-loop cap. These measurements cover the online C++ runtime with file/TCP
+output disabled; they are not offline-pipeline, uncapped-throughput, or universal scene-limit
 claims. Generated result tables, CSV files, execution logs, and benchmark records are
 kept outside the source repository in the
 [performance and benchmark data archive](https://drive.google.com/drive/folders/1FLh2osev_QVqSBR7Gu0UJmejG-zf4_zh?usp=drive_link).
@@ -197,14 +194,15 @@ When file or TCP output is enabled, the application creates:
 
 - `Sonar Data/<timestamp>/<module_name>/2d.esl2d`
 - `Sonar Data/<timestamp>/<module_name>/3d.esl3d`
-- `Sonar Data/<timestamp>/<module_name>/Waveform Data/`
+- `Sonar Data/<timestamp>/<module_name>/Waveform Data/3d.h5` (when native offline processing is enabled)
+- `Sonar Data/<timestamp>/<module_name>/Waveform Data/3d_<timestamp>_pingNNN.png`
 - `Sonar Data/<timestamp>/recording_summary.json`
 
 ## Documentation
 
 - Overall architecture: [`docs/software_architecture_analysis.md`](docs/software_architecture_analysis.md)
 - C++ acoustic core: [`docs/acoustic_simulation_core_overview.md`](docs/acoustic_simulation_core_overview.md)
-- MATLAB offline pipeline: [`docs/Offline Waveform and Image Reconstruction Pipeline.md`](docs/Offline%20Waveform%20and%20Image%20Reconstruction%20Pipeline.md)
+- Native offline pipeline: [`docs/Offline Waveform and Image Reconstruction Pipeline.md`](docs/Offline%20Waveform%20and%20Image%20Reconstruction%20Pipeline.md)
 - Linux build: [`docs/linux_build.md`](docs/linux_build.md)
 - Performance/scalability: [`docs/performance_and_scalability.md`](docs/performance_and_scalability.md)
 - AI-assisted development disclosure: [`docs/ai_assisted_development.md`](docs/ai_assisted_development.md)

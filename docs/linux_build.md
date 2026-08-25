@@ -18,14 +18,17 @@ your system:
 | Qt | Qt 6.9 or newer with Widgets, Network, and OpenGL support |
 | OpenCV | Core, image processing, codecs, video I/O, and `highgui`; `highgui` must not introduce Qt 5 into the Qt 6 process |
 | OpenSceneGraph | OSG and OpenThreads 3.6.x development files and runtime plugins |
+| HDF5 | C development library used by the native offline waveform writer/reader |
+| nlohmann-json | CMake-enabled development package used by JSON and ESL3D readers |
 | Boost | Regex development library |
 | Graphics stack | OpenGL/Mesa development files plus the XCB cursor runtime |
 | Headless testing | Xvfb or an equivalent virtual display, optional but recommended |
 
 Package names are distribution-specific. Common package families include a base
 development toolchain, `cmake`, `git`, `pkg-config`/`pkgconf`, Qt 6 base development
-files, OpenCV development files, OpenSceneGraph/OpenThreads, Boost.Regex, Mesa/OpenGL,
-an XCB cursor utility package, and Xvfb. Search the local package index for the exact
+files, OpenCV development files, OpenSceneGraph/OpenThreads, HDF5, nlohmann-json,
+Boost.Regex, Mesa/OpenGL, an XCB cursor utility package, and Xvfb. Search the local
+package index for the exact
 names when they differ.
 
 ## 2. Clone and Initialize Eigen
@@ -90,11 +93,19 @@ cmake --build build_linux --parallel 2
 For an OpenCV 5 installation, the final path commonly ends in `opencv5` instead.
 Use a low parallel-build level on memory-constrained systems.
 
-The complete build should report both application targets:
+The complete build should report the offline library and both application targets:
 
 ```text
+Built target echoverse_offline_processing
 Built target echoverse_sonar_lab
 Built target esl_launcher
+```
+
+When `BUILD_TESTING` is enabled (the default), validate the embedded HDF5/image stages
+with:
+
+```bash
+ctest --test-dir build_linux --output-on-failure
 ```
 
 ## 5. Run and Smoke-Test

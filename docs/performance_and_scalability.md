@@ -47,13 +47,14 @@ The CSV includes duration, input/output point counts, output-byte estimates, bea
 counts, polar width/height, range, platform, hardware-thread count, and a user-supplied
 run label.
 
-## 3. MATLAB Performance CSV
+## 3. Native Offline Performance CSV
 
-From MATLAB:
+Set `ESL_OFFLINE_PERF_CSV` before starting the application, then enable ESL3D file
+output and native waveform/image generation for the module under test.
 
-```matlab
-setenv('ESL_MATLAB_PERF_CSV', fullfile(pwd, 'results', 'matlab_shipwreck.csv'));
-pointcloud2file("./SonarParameter/Sonar.json");
+```powershell
+$env:ESL_OFFLINE_PERF_CSV = "results\offline_shipwreck.csv"
+build_vcpkg\Release\esl_launcher.exe
 ```
 
 Each row reports:
@@ -65,13 +66,16 @@ Each row reports:
 - total per-ping time;
 - input and retained scatterer counts;
 - output sample/channel dimensions;
-- `cpu_matlab` or `cuda_mex` backend.
+- the current embedded backend label, `cpp_cpu_direct`.
 
 Unset the variable to disable logging:
 
-```matlab
-setenv('ESL_MATLAB_PERF_CSV', '');
+```powershell
+Remove-Item Env:ESL_OFFLINE_PERF_CSV
 ```
+
+`ESL_MAX_FRAMES`, `ESL_MAX_RANGE`, and `ESL_MAX_SCATTERERS` can bound validation
+runs. Record those values with every result because they directly change workload.
 
 ## 4. Completed Windows Characterization
 
@@ -101,7 +105,7 @@ image fidelity is preserved above the threshold.
 Generated result tables, raw CSV files, execution logs, and benchmark records are kept
 outside the source repository in the
 [performance and benchmark data archive](https://drive.google.com/drive/folders/1FLh2osev_QVqSBR7Gu0UJmejG-zf4_zh?usp=drive_link).
-The current measurements do not cover MATLAB CPU/CUDA execution, file/TCP I/O,
+The current measurements do not cover native offline execution, file/TCP I/O,
 profiler overhead, Linux performance, or a failure threshold for larger scenes.
 
 ## 5. Recommended Experiment Matrix
@@ -118,8 +122,8 @@ within each cross-scene comparison.
 For every run, record:
 
 - exact Git commit and Eigen submodule commit;
-- OS, compiler, CMake, Qt, OpenCV, OSG, and MATLAB versions;
-- CPU model/core count, RAM, GPU model/VRAM, and CUDA version;
+- OS, compiler, CMake, Qt, OpenCV, OSG, and HDF5 versions;
+- CPU model/core count, RAM, GPU model/VRAM, and OpenMP availability;
 - scene inventory from `scene_inventory`;
 - range, FOV, angular resolution, beam count, bin count, and point budget;
 - enabled attenuation, reverb, speckle, file, TCP, and visualization options;
@@ -127,22 +131,23 @@ For every run, record:
 - output directory size after the run.
 
 Run each condition at least three times. Exclude a documented warm-up interval, then
-report median and interquartile range or mean, standard deviation, and p95. Report C++
-and MATLAB timings separately because they represent different stages.
+report median and interquartile range or mean, standard deviation, and p95. Report
+online and native-offline timings separately because they represent different stages.
 
 ## 6. Current Implementation Limits
 
 - The main OSG viewer is intentionally single-threaded for rendering stability.
-- The MATLAB `pointcloud2file` loop is sequential across ESL3D frames.
-- CUDA accelerates an individual MATLAB echo-synthesis call only after the MEX file
-  has been compiled; it is not a cluster scheduler.
+- The native offline loop is sequential across ESL3D frames; OpenMP parallelizes
+  receive-channel and selected DSP work inside a frame when available.
+- The embedded offline path is CPU-only and never launches the source port's optional
+  standalone CUDA accelerator.
 - The point-cloud UI constrains the configured maximum point count to 500,000.
 - Point-cloud capture height is capped at 2,048 pixels.
 - General offscreen render textures are capped at 4,096 pixels per dimension.
 - The scene-depth triangle texture path warns when a texture-width limit of 32,768 is
   exceeded.
-- MATLAB currently keeps 30% of reconstructed scatterers in `pointcloud2file` before
-  waveform synthesis; this changes computational load and must be reported.
+- Native processing keeps 100% of reconstructed scatterers by default. Validation
+  caps configured through `ESL_MAX_RANGE` or `ESL_MAX_SCATTERERS` must be reported.
 - Output size grows with ping count, polar frame dimensions, and waveform dimensions.
 
 These are implementation limits, not measured performance results. The manuscript
@@ -156,7 +161,7 @@ by an external scheduler when each job has an isolated output directory. That is
 embarrassingly parallel experiment strategy, but it has not yet been packaged as a
 supported cluster workflow.
 
-Do not describe the current GUI or MATLAB frame loop as HPC-parallel. A future release
+Do not describe the current GUI or native offline frame loop as HPC-parallel. A future release
 could add headless batch mode, deterministic partitioning, scheduler templates, and
 result merging before claiming native HPC support.
 
@@ -166,7 +171,8 @@ result merging before claiming native HPC support.
 - Derive reported table cells from those CSV files with the accompanying summary
   script or notebook.
 - Check run completeness before using timing values from execution logs.
-- Report renderer, point-cloud, MATLAB echo-synthesis, and HDF5/image stages
+- Report renderer, point-cloud, native echo-synthesis, and HDF5/image stages
   separately.
-- State whether CUDA MEX was compiled and actually selected.
+- State the OpenMP status, internal oversampling factor, direct-kernel tile size, and
+  fused-downsampling setting.
 - Report failed or memory-limited large runs as limits rather than silently excluding them.

@@ -10,6 +10,7 @@
         "fc": 450000,
         "fs": 2000000,
         "interp_factor": 8,
+        "echo_oversample_factor": 5,
         "lightPos": [
             0,
             0,

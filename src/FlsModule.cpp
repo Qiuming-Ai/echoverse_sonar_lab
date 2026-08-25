@@ -16,7 +16,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProgressDialog>
-#include <QProcess>
 #include <QRegularExpression>
 #include <sonar_core/AcousticRaySimulator.hpp>
 

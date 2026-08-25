@@ -63,10 +63,16 @@ bool patchSonarParamJsonByType(const QString& json_path, const SonarModuleConfig
 }
 
 QString sonarParamTemplatePath() {
-    const QString rel = QStringLiteral("src/matlab_point2file2image/SonarParameter/Sonar.json");
+    const QString rel = QStringLiteral("src/offline_processing/config/Sonar.json");
     const QString from_cwd = QDir::cleanPath(QDir::currentPath() + QStringLiteral("/") + rel);
     if (QFile::exists(from_cwd)) {
         return from_cwd;
+    }
+    const QString deployed = QDir::cleanPath(
+        QCoreApplication::applicationDirPath() +
+        QStringLiteral("/offline_processing/config/Sonar.json"));
+    if (QFile::exists(deployed)) {
+        return deployed;
     }
     const QString from_app = QDir::cleanPath(
         QCoreApplication::applicationDirPath() + QStringLiteral("/../") + rel);

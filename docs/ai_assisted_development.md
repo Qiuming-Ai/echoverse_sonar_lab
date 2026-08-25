@@ -11,7 +11,7 @@ engineering judgment.
 
 The principal contributions were completed by the authors. These include the
 scientific concept, software architecture, core sonar-simulation and
-signal-processing functions, MATLAB waveform-generation workflow, experiment design
+signal-processing functions, native waveform-generation workflow, experiment design
 and execution, interpretation of results, and final integration decisions.
 
 AI-assisted material did not independently establish scientific claims, generate

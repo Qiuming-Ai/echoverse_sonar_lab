@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(multibeam_standalone_mvp LANGUAGES CXX)
+project(multibeam_standalone_mvp LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -75,6 +75,12 @@ if(USE_REAL_SONAR_CORE)
             list(APPEND ON_OPENCV_LINK_LIBS opencv_world)
         elseif(OpenCV_FOUND AND TARGET opencv_core AND TARGET opencv_imgproc)
             list(APPEND ON_OPENCV_LINK_LIBS opencv_core opencv_imgproc)
+            if(TARGET opencv_imgcodecs)
+                list(APPEND ON_OPENCV_LINK_LIBS opencv_imgcodecs)
+            endif()
+            if(TARGET opencv_videoio)
+                list(APPEND ON_OPENCV_LINK_LIBS opencv_videoio)
+            endif()
         endif()
         if(OpenSceneGraph_FOUND)
             foreach(lib ${OPENSCENEGRAPH_LIBRARIES})
@@ -156,6 +162,91 @@ if(USE_REAL_SONAR_CORE)
 
 endif()
 
+# Native offline waveform/image pipeline. This is the in-process C++ port of
+# matlab_point2file2image; it deliberately excludes the legacy executable
+# launchers and the standalone CUDA child-process backend.
+set(BUILD_OFFLINE_PROCESSING ON)
+if(BUILD_OFFLINE_PROCESSING)
+    find_package(hdf5 CONFIG QUIET COMPONENTS C)
+    if(NOT TARGET hdf5::hdf5-shared AND NOT TARGET hdf5::hdf5-static AND
+       NOT TARGET HDF5::HDF5)
+        find_package(HDF5 REQUIRED COMPONENTS C)
+    endif()
+    find_package(nlohmann_json CONFIG REQUIRED)
+    find_package(OpenMP QUIET)
+
+    set(OFFLINE_PROCESSING_DIR "${MVP_REPO_ROOT}/src/offline_processing")
+    add_library(echoverse_offline_processing STATIC
+        ${OFFLINE_PROCESSING_DIR}/OfflineProcessingPipeline.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/dsp/fft.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/dsp/fft_convolution.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/dsp/fir_filter.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/dsp/resampler.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/image/das_beamformer.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/image/file2image_pipeline.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/image/png_writer.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/image/render.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/image/sector_map.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/image/tvg.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/io/esl3d_reader.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/io/hdf5_reader.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/io/hdf5_writer.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/io/json_config.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/sim/echo_cuda_disabled.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/sim/echo_fft.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/sim/echo_simulator.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/sim/excitation.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/sim/pointcloud_ops.cpp
+        ${OFFLINE_PROCESSING_DIR}/core/util/log.cpp
+    )
+    target_include_directories(echoverse_offline_processing PUBLIC
+        "${OFFLINE_PROCESSING_DIR}"
+        "${OFFLINE_PROCESSING_DIR}/core")
+    target_compile_definitions(echoverse_offline_processing PUBLIC SONAR_HAVE_HDF5=1)
+    if(WIN32)
+        target_compile_definitions(echoverse_offline_processing PRIVATE
+            _USE_MATH_DEFINES NOMINMAX)
+    endif()
+    target_link_libraries(echoverse_offline_processing PUBLIC
+        nlohmann_json::nlohmann_json
+        ${ON_OPENCV_LINK_LIBS})
+    if(TARGET hdf5::hdf5-shared)
+        target_link_libraries(echoverse_offline_processing PUBLIC hdf5::hdf5-shared)
+    elseif(TARGET hdf5::hdf5-static)
+        target_link_libraries(echoverse_offline_processing PUBLIC hdf5::hdf5-static)
+    elseif(TARGET HDF5::HDF5)
+        target_link_libraries(echoverse_offline_processing PUBLIC HDF5::HDF5)
+    else()
+        target_include_directories(echoverse_offline_processing PUBLIC ${HDF5_INCLUDE_DIRS})
+        target_link_libraries(echoverse_offline_processing PUBLIC ${HDF5_LIBRARIES})
+    endif()
+    if(OpenMP_CXX_FOUND)
+        target_compile_definitions(echoverse_offline_processing PUBLIC SONAR_HAVE_OPENMP=1)
+        target_link_libraries(echoverse_offline_processing PUBLIC OpenMP::OpenMP_CXX)
+    endif()
+    if(MSVC)
+        target_compile_options(echoverse_offline_processing PRIVATE /W3 /utf-8)
+    else()
+        target_compile_options(echoverse_offline_processing PRIVATE -Wall -Wextra)
+    endif()
+
+    include(CTest)
+    if(BUILD_TESTING)
+        foreach(_offline_test hdf5 render multisector pipeline)
+            add_executable(offline_${_offline_test}_test
+                "${MVP_REPO_ROOT}/tests/offline_processing/test_${_offline_test}.cpp")
+            target_link_libraries(offline_${_offline_test}_test PRIVATE
+                echoverse_offline_processing)
+            if(WIN32)
+                target_compile_definitions(offline_${_offline_test}_test PRIVATE
+                    _USE_MATH_DEFINES NOMINMAX)
+            endif()
+            add_test(NAME offline_${_offline_test}_test
+                     COMMAND offline_${_offline_test}_test)
+        endforeach()
+    endif()
+endif()
+
 if(USE_REAL_SONAR_CORE)
     option(BUILD_MULTIBEAM_GUI "Build echoverse_sonar_lab viewer (requires Qt 6.9+ Widgets and Network)" ON)
     if(BUILD_MULTIBEAM_GUI)
@@ -226,6 +317,10 @@ if(USE_REAL_SONAR_CORE)
     if(WIN32)
         target_sources(echoverse_sonar_lab PRIVATE src/resources/echoverse_sonar_lab.rc)
     endif()
+    add_custom_command(TARGET echoverse_sonar_lab POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${OFFLINE_PROCESSING_DIR}/config"
+            "$<TARGET_FILE_DIR:echoverse_sonar_lab>/offline_processing/config")
     target_include_directories(echoverse_sonar_lab PRIVATE ${ON_COMMON_INCLUDE_DIRS}
         "${SONAR_UI_DIR}"
         "${MVP_REPO_ROOT}/src/sonar_palette")
@@ -234,6 +329,9 @@ if(USE_REAL_SONAR_CORE)
         ${ON_OPENCV_LINK_LIBS}
         ${MVP_QT_WIDGETS_LIB}
         ${MVP_QT_NETWORK_LIB})
+    if(BUILD_OFFLINE_PROCESSING)
+        target_link_libraries(echoverse_sonar_lab PRIVATE echoverse_offline_processing)
+    endif()
     if(TARGET opencv_highgui)
         target_link_libraries(echoverse_sonar_lab PRIVATE opencv_highgui)
     else()
@@ -316,6 +414,10 @@ if(USE_REAL_SONAR_CORE)
     if(WIN32)
         target_sources(esl_launcher PRIVATE src/resources/esl_launcher.rc)
     endif()
+    add_custom_command(TARGET esl_launcher POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${OFFLINE_PROCESSING_DIR}/config"
+            "$<TARGET_FILE_DIR:esl_launcher>/offline_processing/config")
     target_include_directories(esl_launcher PRIVATE "${MVP_REPO_ROOT}/src")
     target_link_libraries(esl_launcher PRIVATE ${MVP_QT_WIDGETS_LIB})
     target_compile_definitions(esl_launcher PRIVATE STANDALONE_SIMULATION_DIR="${MVP_REPO_ROOT_CMAKE}")

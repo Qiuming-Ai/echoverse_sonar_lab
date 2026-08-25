@@ -3,6 +3,7 @@
     "c0": 1500,
     "fs": 2000000,
     "interp_factor": 8,
+    "echo_oversample_factor": 5,
     "fc": 450000,
     "BW": 100000,
     "Nrx": 64,
