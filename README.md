@@ -1,5 +1,7 @@
 # EchoVerse Sonar Lab
 
+English | [简体中文](docs/readme_cn.md)
+
 EchoVerse Sonar Lab is an open-source multimodal sonar simulation, visualization,
 streaming, and offline signal-processing environment. It supports forward-looking
 sonar (FLS), multibeam echo sounder (MBES), and side-scan sonar (SSS) workflows in a
