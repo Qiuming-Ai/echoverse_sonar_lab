@@ -198,6 +198,10 @@ $env:ESL_OFFLINE_PERF_CSV = "results/offline_performance.csv"
 接受的代码变更与报告结果均通过人工主导的构建、测试与实际实验加以验证。声明与验证原则详见
 [`docs/ai_assisted_development.md`](ai_assisted_development.md)。
 
+## 引用
+
+如果您在研究中使用了 EchoVerse Sonar Lab,请引用配套的软件论文:[https://doi.org/10.1016/j.softx.2026.102994](https://doi.org/10.1016/j.softx.2026.102994)
+
 ## 许可证
 
 软件代码以 Apache License 2.0 发布。详见 `LICENSE` 与 `NOTICE`。第三方模型、网格、纹理、

@@ -223,6 +223,11 @@ changes and reported results were verified through human-led builds, tests, and
 executed experiments. The disclosure and verification principles are described in
 [`docs/ai_assisted_development.md`](docs/ai_assisted_development.md).
 
+## Citation
+
+If you use EchoVerse Sonar Lab in your research, please cite the accompanying
+software paper: [https://doi.org/10.1016/j.softx.2026.102994](https://doi.org/10.1016/j.softx.2026.102994)
+
 ## License
 
 The software code is released under the Apache License 2.0. See `LICENSE` and
